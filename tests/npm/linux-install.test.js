@@ -198,8 +198,8 @@ for (const [name, options, expected] of [
   ['a checksums file with no entry for the archive', { serveChecksumsAs: `${'a'.repeat(64)}  other.tar.gz\n` }, /Checksum entry missing/],
   ['an archive with an unexpected member', { members: { ...GOOD_MEMBERS, extra: 'x' } }, /unexpected entries: agent-desktop, agent-desktop-linux-clipboard-owner, extra/],
   ['an archive that omits the helper', { members: { 'agent-desktop': 'cli-only' } }, /unexpected entries: agent-desktop$/m],
-  ['no curl on PATH', { withCurl: false }, /spawnSync curl ENOENT/],
-  ['no tar on PATH', { withTar: false }, /spawnSync tar ENOENT/],
+  ['no curl on PATH', { withCurl: false }, /spawnSync curl ENOENT|Executable not found in \$PATH: "curl"/],
+  ['no tar on PATH', { withTar: false }, /spawnSync tar ENOENT|Executable not found in \$PATH: "tar"/],
 ]) {
   test(`${name} fails the install explicitly and leaves nothing behind`, { skip: POSIX_ONLY }, async () => {
     const scratch = temporaryDirectory();
