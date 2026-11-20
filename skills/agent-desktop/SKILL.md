@@ -186,14 +186,13 @@ and `unknown` do not prove that nothing happened. A click or select carries `eff
 `details.witness_diff`) and `not_observed` do not prove that nothing happened. If retry
 is unsafe or missing, read live state first and never repeat an action blindly; use `details.post_state` when present. An action can land even when `ok` is false.
 
-Held input fails closed: `key-down`, `key-up`, `mouse-down`, and `mouse-up` cannot
-hold input across CLI calls until daemon-owned release exists. They return
-`ACTION_NOT_SUPPORTED`; headless mouse holds return `POLICY_DENIED` first.
-Use atomic input commands instead, subject to the same headless rule.
+Held input fails closed: `key-down`, `key-up`, `mouse-down`, and `mouse-up` cannot hold input
+across CLI calls until daemon-owned release exists. They return `ACTION_NOT_SUPPORTED`; headless
+mouse holds return `POLICY_DENIED` first. Use atomic input commands instead. `hover`, `drag`,
+`mouse-move`, `mouse-click --xy` and `mouse-wheel` need `--headed`; a macOS `--window-xy` click does not.
 
-Do not bypass a blocked shortcut with `--force` unless the user authorized its
-effect. Notification indices are positions, not identities: list again and copy
-the expected app and title before a single-item mutation.
+Do not bypass a blocked shortcut with `--force` unless the user authorized its effect. Notification
+indices are positions, not identities: list again and copy the expected app and title before a mutation.
 
 Batch is not a transaction and does not roll back earlier entries.
 Never read a value through an app's own Copy command: it replaces the user's clipboard.

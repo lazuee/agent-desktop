@@ -10,33 +10,28 @@ description: >
 
 # agent-desktop on macOS
 
-Use the core skill's headless observe, act, verify workflow. A platform capability
-never authorizes `--headed`; only the user's explicit request does.
+Use the core skill's headless observe, act, verify workflow. A platform capability never
+authorizes `--headed`; only the user's explicit request does.
 
 ## Setup and permissions
 
-The sandbox provider on macOS is `macos`: a macOS VM that needs an Apple Silicon Mac, macOS 13 or later on the host and in the guest, and Xcode Command Line Tools. The first setup needs a person in the guest window; clones need none. See `agent-browser.dev/desktop/sandboxes/macos`.
+The sandbox provider on macOS is `macos`: a macOS VM needing an Apple Silicon Mac, macOS 13 or later on the host and guest, and Xcode Command Line Tools. The first setup needs a person in the guest window; clones need none. See `agent-browser.dev/desktop/sandboxes/macos`.
 
-`agent-desktop status` reports `permissions` and `supported_surfaces`.
-Accessibility must be `granted` for observation and actions; Screen Recording
-must be `granted` for screenshots, including session screenshot artifacts.
-Grant access to the app that launches the CLI and to the binary if listed
-separately. Ask the user to change the relevant privacy permissions, then confirm
-with `agent-desktop permissions`. A new CLI call sees a new grant; a batch
-retains its process's cached report.
+`agent-desktop status` reports `permissions` and `supported_surfaces`. Accessibility must
+be `granted` for observation and actions, Screen Recording for screenshots including
+session artifacts. Grant the launching app, and the binary if listed separately. Ask the
+user, then confirm with `agent-desktop permissions`. A new CLI call sees a new grant; a
+batch keeps its cached report.
 
-`permissions` does not prompt. Requests use a bounded isolated helper.
-The permission guide opens a visible settings page and guide panel, so ask the
-user before starting it. It offers the app that started agent-desktop's process
-tree: under tmux, the app that started the tmux server, which can differ from
-the terminal you attach from; under SSH, the `agent-desktop` binary. Automation
-may report `unknown` when consent would require a prompt.
+`permissions` does not prompt. The guide opens a visible settings page, so ask the
+user first; it offers the app that started the process tree (under tmux, the app that
+started the tmux server, which can differ from your terminal; under SSH, the binary).
+Automation may report `unknown` when consent would require a prompt.
 
 ## Platform behavior
 
-- Native AX element tokens identify individual controls, including twins. A stale
-  token never falls back to a look-alike search. Elements without a token follow
-  the uniqueness rule of the core skill.
+- Native AX element tokens identify individual controls, including twins. A stale token
+  never falls back to a look-alike search; elements without one follow the core rule.
 - `list-windows` also lists a floating or panel window an app raises above the
   normal level, as accessory apps do with settings and panels, while it is on screen.
 - `menu` and `menubar` observations are application-owned and can omit `data.window`.
@@ -48,6 +43,11 @@ may report `unknown` when consent would require a prompt.
   `snapshot --app <app> --surface popover`.
 - `list-surfaces` lists the sheets, dialogs and popovers of every window, not only
   the focused one. A system service panel, such as AirDrop from a share, is a dialog.
+- A control with no ref takes a headless window-relative click: capture with
+  `screenshot --window-id w-4521 --window-frame f.png`, divide image coordinates by
+  `scale_factor`, then `mouse-click --window-id w-4521 --window-xy 120,95` in points from the
+  frame's top-left. Target the frontmost on-screen window; a window behind a sibling of the
+  same app is refused because macOS reorders it on click. The post is `delivered_unverified`.
 - Headless menu-opening and dialog-opening actions can refuse before delivery.
   A label ending in an ellipsis predicts a dialog; it does not prove one exists.
   A click on a button inside a popover refuses with `kind: popover_command`: a

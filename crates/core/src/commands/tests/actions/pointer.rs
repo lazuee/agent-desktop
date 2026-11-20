@@ -143,6 +143,7 @@ fn mouse_click_move_and_wheel_echo_only_their_own_request_fields() {
         button: MouseButton::Right,
         count: 2,
         modifiers: vec![Modifier::Shift],
+        window_id: None,
     };
     let wheel = MouseWheelArgs {
         x: 50.0,
