@@ -104,6 +104,7 @@ impl ActionOps for SingleShotScrollAdapter {
     fn scroll_into_view(
         &self,
         handle: &NativeHandle,
+        _policy: crate::InteractionPolicy,
         _lease: &InteractionLease,
     ) -> Result<(), AdapterError> {
         assert_eq!(*handle.downcast_ref::<u32>().unwrap(), 1);
@@ -203,6 +204,7 @@ fn ref_entry(pid: u32) -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
+            chain: Vec::new(),
         },
     }
 }

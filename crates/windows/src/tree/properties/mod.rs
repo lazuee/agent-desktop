@@ -56,34 +56,20 @@ pub(crate) fn rect_has_area(rect: &agent_desktop_core::Rect) -> bool {
 /// property's name and never its value, so a failure cannot leak content
 /// through the error path.
 ///
-/// The base's own details are merged into rather than replaced, so the
+/// The base's own details stay, because `with_details` merges: the
 /// `complete`/`retryable` pair the classifier decided for that failure
 /// survives into the payload a caller and a trace segment read. It is
-/// deliberately not re-decided here: what an unreadable property means depends
-/// on why it could not be read, and the classifier already separates those
-/// families - a provider that does not implement the property is a settled
-/// absence, a transport timeout is incomplete and retryable. Flattening them
-/// to one value would be the wrong stamp on whichever family it did not match.
-///
-/// Merging also leaves the typed retryability every core retry consumer gates
-/// on exactly where it was: the `retryable` key that goes back in is the
-/// base's own, so the value derived from it is the value already derived.
-///
-/// Only the payload is at stake. A wrap whose details omit `retryable`
-/// preserves the typed stamp too, because `with_details` overwrites it only
-/// when the new details carry that key - the property that lets
-/// `live_read.rs`'s vanished-target check key on the error code alone.
+/// deliberately not re-decided here: a provider that does not implement the
+/// property is a settled absence, a transport timeout is incomplete and
+/// retryable, and one value would be the wrong stamp on one of them. The typed
+/// retryability stays too, because these details carry no `retryable` key -
+/// the property that lets `live_read.rs`'s vanished-target check key on the
+/// error code alone.
 pub fn property_read_error(base: AdapterError, property: TreeProperty) -> AdapterError {
-    let mut details = base
-        .details
-        .clone()
-        .filter(serde_json::Value::is_object)
-        .unwrap_or_else(|| serde_json::json!({}));
-    if let Some(object) = details.as_object_mut() {
-        object.insert("kind".into(), "property_read_failed".into());
-        object.insert("property".into(), property.as_str().into());
-    }
-    base.with_details(details)
+    base.with_details(serde_json::json!({
+        "kind": "property_read_failed",
+        "property": property.as_str(),
+    }))
 }
 
 /// Pinned here rather than in `properties_tests.rs`, which sits at the
@@ -151,7 +137,7 @@ mod imp {
     /// returned errors carry shape only and feed the walk's incompleteness
     /// accounting.
     pub fn read_live(element: &UIAElement) -> (ElementProperties, Vec<AdapterError>) {
-        read_with(element, live_read, None)
+        read_with(element, live_read, None, &TreeProperty::WALK_SET)
     }
 
     /// The same live read, bounded by an operation deadline consulted between
@@ -167,7 +153,7 @@ mod imp {
         element: &UIAElement,
         deadline: Deadline,
     ) -> (ElementProperties, Vec<AdapterError>) {
-        read_with(element, live_read, Some(deadline))
+        read_with(element, live_read, Some(deadline), &TreeProperty::WALK_SET)
     }
 
     /// Reads the walk property set from an element's cache.
@@ -176,8 +162,11 @@ mod imp {
     /// live fetch: it classifies `Unknown` with a structured error, never
     /// `Absent`, so a missing request entry cannot masquerade as a provider
     /// that does not implement the property.
-    pub fn read_cached(element: &UIAElement) -> (ElementProperties, Vec<AdapterError>) {
-        read_with(element, cached_read, None)
+    pub fn read_cached(
+        element: &UIAElement,
+        set: &[TreeProperty],
+    ) -> (ElementProperties, Vec<AdapterError>) {
+        read_with(element, cached_read, None, set)
     }
 
     /// Reads one property live, for the cache policy's provider-class probe
@@ -236,11 +225,12 @@ mod imp {
         element: &UIAElement,
         read: impl Fn(&UIAElement, TreeProperty) -> Result<PropertyOutcome, AdapterError>,
         deadline: Option<Deadline>,
+        set: &[TreeProperty],
     ) -> (ElementProperties, Vec<AdapterError>) {
-        let mut reads = Vec::with_capacity(TreeProperty::WALK_SET.len());
+        let mut reads = Vec::with_capacity(set.len());
         let mut errors = Vec::new();
         let mut truncated = false;
-        for property in TreeProperty::WALK_SET {
+        for &property in set {
             if property.is_element_valued() {
                 continue;
             }
@@ -346,6 +336,7 @@ pub(crate) use imp::rect_from_uia;
 pub mod element_properties;
 pub mod property_ids;
 pub mod property_outcome;
+pub mod read_set;
 #[cfg(test)]
 #[path = "properties_tests.rs"]
 mod tests;

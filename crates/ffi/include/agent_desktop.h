@@ -330,6 +330,7 @@ enum AdIdentifierKind
   AD_IDENTIFIER_KIND_AUTOMATION_ID = 2,
   AD_IDENTIFIER_KIND_RUNTIME_ID = 3,
   AD_IDENTIFIER_KIND_ATSPI_OBJECT_PATH = 4,
+  AD_IDENTIFIER_KIND_GRID_CELL = 5,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1298,12 +1299,12 @@ void ad_app_list_free(struct AdAppList *list);
  * strict element resolution (→ `STALE_REF`/`AMBIGUOUS_TARGET`) → live
  * actionability preflight → dispatch → owned-handle drop.
  *
- * Policy: semantic actions, including `TypeText`, default to strict
- * `headless`. Explicit `PressKey` defaults to `focus_fallback`. A policy
- * discriminant may elevate to focus fallback or headed. Base and elevation
- * are computed by `agent_desktop_core::commands::execute_by_ref::execute_with_timeout` via
- * `Action::base_interaction_policy` + `InteractionPolicy::join`, so CLI and
- * FFI share a single source of policy truth.
+ * Policy: every action, including `TypeText` and `PressKey`, defaults to
+ * strict `headless`. A policy discriminant may elevate to focus fallback or
+ * headed. `agent_desktop_core::commands::execute_by_ref::execute_with_timeout`
+ * applies that policy, and core refuses with `ErrPolicyDenied` an action whose
+ * effects it does not permit, so CLI and FFI share a single source of policy
+ * truth.
  *
  * `ref_id` tri-state: null → `ErrInvalidArgs`; non-null invalid UTF-8 →
  * `ErrInvalidArgs`; valid UTF-8 that is not a snapshot-qualified
@@ -1311,7 +1312,8 @@ void ad_app_list_free(struct AdAppList *list);
  *
  * `policy` is an `AdPolicyKind` discriminant (0=Headless, 1=FocusFallback,
  * 2=Headed). An out-of-range value returns `ErrInvalidArgs`. `Headless (0)`
- * accepts the action's base policy. `FocusFallback (1)` explicitly permits
+ * is strict headless for every action, so a `PressKey` the element does not
+ * advertise natively returns `ErrPolicyDenied`. `FocusFallback (1)` explicitly permits
  * focus without cursor movement. `Headed (2)` opts in to physical cursor and
  * keyboard delivery.
  *
@@ -1374,7 +1376,7 @@ AdResult ad_execute_by_ref_timeout(const struct AdAdapter *adapter,
  * interactive elements, persists the refmap to disk, and writes the JSON envelope into `*out`.
  *
  * The JSON shape matches `agent-desktop snapshot`:
- * `{"version":"2.6","ok":true,"command":"snapshot","data":{"app":"...","window":{...},"ref_count":N,"snapshot_id":"...","complete":true,"tree":{...}}}`.
+ * `{"version":"2.7","ok":true,"command":"snapshot","data":{"app":"...","window":{...},"ref_count":N,"snapshot_id":"...","complete":true,"tree":{...}}}`.
  * On macOS, `window` is omitted for application-owned menu and menubar surfaces
  * and when a background app with no window is read through its process.
  *

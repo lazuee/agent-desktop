@@ -1,5 +1,5 @@
 use super::*;
-use crate::tree::live::test_support::words;
+use crate::tree::test_support::helpers::words;
 
 #[test]
 fn frames_without_a_component_are_not_top_levels() {
@@ -190,6 +190,7 @@ fn listed(
 ) -> crate::system::registry::listed_window::ListedWindow {
     use agent_desktop_core::{WindowInfo, WindowState};
     crate::system::registry::listed_window::ListedWindow {
+        alert: false,
         app: 0,
         info: WindowInfo {
             id: format!("{:?}", frame.extents),

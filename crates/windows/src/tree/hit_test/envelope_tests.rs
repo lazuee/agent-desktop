@@ -8,7 +8,7 @@ use agent_desktop_core::{
 };
 use std::sync::atomic::{AtomicU32, Ordering};
 
-const TOKEN: &str = "axtok1:00";
+const TOKEN: &str = "envelope-token";
 
 struct EnvelopeAdapter {
     live: LiveElement,
@@ -99,14 +99,13 @@ impl ActionOps for EnvelopeAdapter {
     fn scroll_into_view(
         &self,
         _handle: &NativeHandle,
+        _policy: agent_desktop_core::InteractionPolicy,
         _lease: &InteractionLease,
     ) -> Result<(), AdapterError> {
         self.scroll_calls.fetch_add(1, Ordering::SeqCst);
-        if self.scroll_ok {
-            Ok(())
-        } else {
-            Err(crate::actions::scroll_into_view::unsupported_error())
-        }
+        self.scroll_ok
+            .then_some(())
+            .ok_or_else(crate::actions::scroll_into_view::unsupported_error)
     }
 
     fn execute_action(
@@ -151,7 +150,7 @@ fn live_button(enabled: bool, bounds: Rect) -> LiveElement {
         identity: LiveIdentity {
             name: LocatorField::Known("Run".into()),
             description: LocatorField::Absent,
-            identifiers: IdentifierEvidence::absent().with_retained_object(TOKEN.into()),
+            identifiers: IdentifierEvidence::absent().with_element_token(TOKEN),
         },
         state: ElementState {
             role: "button".into(),
@@ -180,7 +179,7 @@ fn entry_for(live: &LiveElement) -> RefEntry {
             process_instance: Some("test-instance".into()),
         },
         identity: RefEntryIdentity {
-            retained_object: Some(TOKEN.into()),
+            retained_object: live.identity.identifiers.retained_object().map(Into::into),
             role: live.state.role.clone(),
             name: Some("Run".into()),
             ..Default::default()
@@ -206,6 +205,7 @@ fn entry_for(live: &LiveElement) -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: Default::default(),
+            chain: Vec::new(),
         },
     }
 }

@@ -1,7 +1,7 @@
 use agent_desktop_core::{
-    AccessibilityNode, ActionOps, AdapterError, AppInfo, ClipboardContent, ClipboardFormat,
-    Deadline, DragParams, ElementState, InputOps, InteractionLease, KeyCombo, LiveElement,
-    MouseEvent, NativeHandle, ObservationOps, ObservationRequest, ObservationRoot, OperationReport,
+    AccessibilityNode, ActionOps, AdapterError, ClipboardContent, ClipboardFormat, Deadline,
+    DragParams, ElementState, InputOps, InteractionLease, KeyCombo, LiveElement, MouseEvent,
+    NativeHandle, ObservationOps, ObservationRequest, ObservationRoot, OperationReport,
     ProcessIdentity, Rect, RefEntry, SnapshotSurface, SurfaceInfo, TreeOptions, WindowFilter,
     WindowInfo,
 };
@@ -56,6 +56,12 @@ impl Default for WindowsAdapter {
 }
 
 impl ObservationOps for WindowsAdapter {
+    /// A popover belongs to the application, not to one window: its refs resolve
+    /// against the application's open popover.
+    fn is_application_surface(&self, surface: SnapshotSurface) -> bool {
+        surface == SnapshotSurface::Popover
+    }
+
     fn observe_tree(
         &self,
         root: ObservationRoot<'_>,
@@ -83,9 +89,10 @@ impl ObservationOps for WindowsAdapter {
     fn resolve_locator_anchor(
         &self,
         entry: &RefEntry,
+        base: Option<&NativeHandle>,
         deadline: Deadline,
     ) -> Result<NativeHandle, AdapterError> {
-        crate::tree::resolve::resolve_anchor::resolve_locator_anchor(entry, deadline)
+        crate::tree::resolve::resolve_anchor::resolve_locator_anchor(entry, base, deadline)
     }
 
     /// The five live readers are projections over one shared single-element
@@ -157,6 +164,14 @@ impl ObservationOps for WindowsAdapter {
         crate::tree::live_read::live_element(&read)
     }
 
+    fn read_effect_witness(
+        &self,
+        handle: &NativeHandle,
+        deadline: Deadline,
+    ) -> Result<agent_desktop_core::EffectWitness, AdapterError> {
+        crate::tree::effect_witness::read_effect_witness(handle, deadline)
+    }
+
     fn get_element_bounds(
         &self,
         handle: &NativeHandle,
@@ -183,8 +198,12 @@ impl ObservationOps for WindowsAdapter {
         crate::system::window::window_ops::list_windows_live(filter, deadline)
     }
 
-    fn list_apps(&self, deadline: Deadline) -> Result<Vec<AppInfo>, AdapterError> {
-        crate::system::app_ops::list_apps_live(deadline)
+    fn query_app_inventory(
+        &self,
+        query: agent_desktop_core::AppInventoryQuery<'_>,
+        deadline: Deadline,
+    ) -> Result<agent_desktop_core::AppInventory, AdapterError> {
+        Ok(query.answer(crate::system::app_ops::list_apps_live(deadline)?))
     }
 
     /// The per-process surface inventory. Window-backed surfaces carry the
@@ -216,6 +235,21 @@ impl ObservationOps for WindowsAdapter {
     }
 }
 impl ActionOps for WindowsAdapter {
+    fn foreground_effect(
+        &self,
+        _handle: &NativeHandle,
+        request: &agent_desktop_core::actions::action_request::ActionRequest,
+        _deadline: Deadline,
+    ) -> Result<Option<agent_desktop_core::DeclaredEffect>, AdapterError> {
+        Ok(match request.action {
+            agent_desktop_core::Action::SetFocus => Some(agent_desktop_core::DeclaredEffect {
+                effect: agent_desktop_core::Effect::FocusSteal,
+                kind: "focus",
+            }),
+            _ => None,
+        })
+    }
+
     fn execute_action(
         &self,
         handle: &NativeHandle,
@@ -228,9 +262,11 @@ impl ActionOps for WindowsAdapter {
     fn scroll_into_view(
         &self,
         handle: &NativeHandle,
+        policy: agent_desktop_core::InteractionPolicy,
         lease: &InteractionLease,
     ) -> Result<(), AdapterError> {
-        crate::actions::scroll_into_view::scroll_into_view_impl(handle, lease)
+        crate::actions::scroll_into_view::scroll_into_view_outcome(handle, lease, policy)
+            .map(|_| ())
     }
 }
 impl InputOps for WindowsAdapter {

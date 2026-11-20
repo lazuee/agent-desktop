@@ -1,4 +1,5 @@
 use super::*;
+use crate::AdapterError;
 
 fn resolve_test_point(
     args: PointResolveArgs<'_>,
@@ -114,7 +115,7 @@ fn ref_snapshot(pid: u32) -> String {
         scope: crate::RefScope {
             root_ref: None,
             path_is_absolute: false,
-            path: smallvec::SmallVec::new(),
+            ..Default::default()
         },
     });
     store.save_new_snapshot(&refmap).unwrap()
@@ -125,7 +126,7 @@ fn ref_args(snapshot_id: &str) -> PointResolveArgs<'static> {
         ref_id: Some(Box::leak(format!("@{snapshot_id}:e1").into_boxed_str())),
         xy: None,
         missing_input_message: "Provide a ref (@<snapshot_id>:e1) or --xy x,y",
-        headed_requirement: crate::HeadedRequirement::None,
+        focuses_window: false,
     }
 }
 
@@ -233,7 +234,7 @@ fn raw_xy_input_never_calls_hit_test() {
             ref_id: None,
             xy: Some((5.0, 6.0)),
             missing_input_message: "Provide a ref (@<snapshot_id>:e1) or --xy x,y",
-            headed_requirement: crate::HeadedRequirement::None,
+            focuses_window: false,
         },
         &adapter,
         &CommandContext::default(),
@@ -278,7 +279,7 @@ fn focus_ref_entry() -> RefEntry {
         scope: crate::RefScope {
             root_ref: None,
             path_is_absolute: false,
-            path: smallvec::SmallVec::new(),
+            ..Default::default()
         },
     }
 }

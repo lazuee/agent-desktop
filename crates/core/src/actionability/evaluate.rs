@@ -1,7 +1,7 @@
 use super::{
     evidence::ActionabilityEvidence, gates, receives_events::receives_events_check,
     report::ActionabilityReport, requirements::ActionabilityRequirements,
-    stability::StabilityExpectation,
+    stability::StabilityExpectation, suggestion,
 };
 use crate::{
     AdapterError, ErrorCode,
@@ -94,12 +94,12 @@ pub(super) fn check_with_stability_or_gap(
     hit_test: Option<(&NativeHandle, &dyn PlatformAdapter)>,
     deadline: crate::Deadline,
 ) -> Result<ActionabilityReport, AdapterError> {
-    let (report, requirement) =
-        build_report_with_requirement(stability, evidence, request, hit_test, deadline)?;
+    let (report, focus) =
+        build_report_with_focus(stability, evidence, request, hit_test, deadline)?;
     if !report.actionable && report.only_blocking_check_is_stability() {
         return Ok(report);
     }
-    if evidence.can_wait_for_geometry(request, &report, requirement) {
+    if evidence.can_wait_for_geometry(request, &report, focus) {
         return Ok(report);
     }
     finish(evidence, request, report)
@@ -112,9 +112,9 @@ pub(super) fn check_before_focus(
     hit_test: Option<(&NativeHandle, &dyn PlatformAdapter)>,
     deadline: crate::Deadline,
 ) -> Result<ActionabilityReport, AdapterError> {
-    let (report, requirement) =
-        build_report_with_requirement(stability, evidence, request, hit_test, deadline)?;
-    if evidence.can_wait_for_geometry(request, &report, requirement) {
+    let (report, focus) =
+        build_report_with_focus(stability, evidence, request, hit_test, deadline)?;
+    if evidence.can_wait_for_geometry(request, &report, focus) {
         return Ok(report);
     }
     finish(evidence, request, report)
@@ -127,26 +127,29 @@ pub(super) fn build_report(
     hit_test: Option<(&NativeHandle, &dyn PlatformAdapter)>,
     deadline: crate::Deadline,
 ) -> Result<ActionabilityReport, AdapterError> {
-    build_report_with_requirement(stability, evidence, request, hit_test, deadline)
+    build_report_with_focus(stability, evidence, request, hit_test, deadline)
         .map(|(report, _)| report)
 }
 
-fn build_report_with_requirement(
+fn build_report_with_focus(
     stability: StabilityExpectation,
     evidence: &ActionabilityEvidence,
     request: &ActionRequest,
     hit_test: Option<(&NativeHandle, &dyn PlatformAdapter)>,
     deadline: crate::Deadline,
-) -> Result<(ActionabilityReport, Option<crate::HeadedRequirement>), AdapterError> {
-    let requirement = if request.policy.is_headed() {
-        hit_test
-            .map(|(handle, adapter)| adapter.headed_requirement(handle, request, deadline))
-            .transpose()?
-    } else {
-        None
+) -> Result<(ActionabilityReport, Option<crate::HeadedFocus>), AdapterError> {
+    let focus = match hit_test {
+        Some((handle, adapter)) => {
+            super::foreground::require_declared(
+                adapter.foreground_effect(handle, request, deadline)?,
+                request,
+            )?;
+            adapter.headed_focus(handle, request, deadline)?
+        }
+        None => None,
     };
     let mut semantic_request;
-    let request = if requirement == Some(crate::HeadedRequirement::FocusedApplication) {
+    let request = if focus == Some(crate::HeadedFocus::Application) {
         semantic_request = request.clone();
         semantic_request.policy = crate::InteractionPolicy::headless();
         &semantic_request
@@ -156,9 +159,9 @@ fn build_report_with_requirement(
     let requirements = ActionabilityRequirements::for_action(&request.action);
     let pointer_delivery =
         requirements.pointer_delivery(&request.action, &evidence.available_actions, request.policy);
+    let presentation_point = evidence.bounds.and_then(center_point);
     let mut checks = Vec::new();
     let mut verified_point = None;
-    let presentation_point = evidence.bounds.and_then(center_point);
     let without_pointer = requirements.delivered_without_pointer(
         request,
         &evidence.available_actions,
@@ -208,7 +211,7 @@ fn build_report_with_requirement(
                 evidence.bounds,
                 pointer_delivery,
             ),
-            requirement,
+            focus,
         ));
     }
     if matches!(pointer_delivery, super::PointerDelivery::Physical) {
@@ -233,7 +236,7 @@ fn build_report_with_requirement(
             evidence.bounds,
             pointer_delivery,
         ),
-        requirement,
+        focus,
     ))
 }
 
@@ -246,6 +249,8 @@ fn center_point(bounds: crate::Rect) -> Option<crate::Point> {
     })
 }
 
+const CELL_EDITOR_SUGGESTION: &str = "This cell is not directly editable. Click it, then take a fresh snapshot and target the text editor inside the cell. If the cell shows no editor, the first click only selected it: click it again.";
+
 fn finish(
     evidence: &ActionabilityEvidence,
     request: &ActionRequest,
@@ -256,17 +261,17 @@ fn finish(
     }
     let code = report.terminal_code().unwrap_or(ErrorCode::ActionFailed);
     let suggestion = if code == ErrorCode::ActionFailed {
-        "Wait for the target to become actionable, refresh the snapshot, or use an explicit physical/focus command if intended."
+        suggestion::ACTION_FAILED_SUGGESTION.to_owned()
     } else if evidence.state.role == "cell"
         && report.checks.iter().any(|check| {
             check.check == "editable" && check.status == super::status::ActionabilityStatus::Fail
         })
     {
-        "This cell is not directly editable. Activate it, take a fresh snapshot, and target the text editor if one appears."
+        CELL_EDITOR_SUGGESTION.to_owned()
     } else if code == ErrorCode::ActionNotSupported
         && matches!(request.action, crate::Action::SetFocus)
     {
-        "Choose an element advertising SetFocus in a fresh snapshot. To focus the owning window instead, use focus-window."
+        "Choose an element advertising SetFocus in a fresh snapshot. To focus the owning window instead, use focus-window.".to_owned()
     } else if code == ErrorCode::ActionNotSupported
         && matches!(
             request.action,
@@ -274,13 +279,9 @@ fn finish(
         )
         && matches!(evidence.state.role.as_str(), "textfield" | "combobox")
     {
-        if request.policy.is_headed() {
-            "This field has no semantic text-write action. Use 'type' in the current headed mode for physical keyboard input; select the existing text first if you intend to replace it. If typing refuses because the field cannot be focused, use clipboard-set and the app's paste shortcut, then verify the field."
-        } else {
-            "This field has no semantic text-write action. Use '--headed type' for physical keyboard input; select the existing text first if you intend to replace it. If typing refuses because the field cannot be focused, use clipboard-set and the app's paste shortcut, then verify the field."
-        }
+        suggestion::text_write(request.policy)
     } else {
-        "Waiting will not help: this element cannot satisfy the action as targeted. Target an element that advertises the action (check available_actions in a fresh snapshot). For a dropdown without select support, open it with click, inspect its choices, and use explicit keyboard input."
+        super::suggestion::WAITING_SUGGESTION.to_owned()
     };
     let mut details = json!(report);
     if let Some(object) = details.as_object_mut()
@@ -295,7 +296,7 @@ fn finish(
         format!("Target is not actionable: {}", report.failure_reasons()),
     )
     .with_details(details)
-    .with_suggestion(suggestion)
+    .with_suggestion(suggestion::refine(suggestion, &report, evidence, request))
     .with_disposition(crate::DeliverySemantics::not_delivered()))
 }
 
@@ -355,13 +356,7 @@ mod tests {
         let error =
             finish(&evidence, &request, report).expect_err("non-actionable report must fail");
 
-        assert_eq!(
-            error.suggestion.as_deref(),
-            Some(
-                "This cell is not directly editable. Activate it, take a fresh snapshot, and \
-                 target the text editor if one appears."
-            )
-        );
+        assert_eq!(error.suggestion.as_deref(), Some(CELL_EDITOR_SUGGESTION));
         assert!(!error.suggestion.unwrap().contains("it exposes"));
     }
 
@@ -390,3 +385,7 @@ mod tests {
 #[cfg(test)]
 #[path = "evaluate_geometry_tests.rs"]
 mod geometry_tests;
+
+#[cfg(test)]
+#[path = "evaluate_suggestion_tests.rs"]
+mod suggestion_tests;

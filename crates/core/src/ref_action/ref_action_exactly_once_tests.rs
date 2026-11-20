@@ -133,6 +133,7 @@ impl ActionOps for DispatchGuardAdapter {
     fn scroll_into_view(
         &self,
         _handle: &NativeHandle,
+        _policy: crate::InteractionPolicy,
         _lease: &crate::InteractionLease,
     ) -> Result<(), AdapterError> {
         self.scroll_calls.fetch_add(1, Ordering::SeqCst);
@@ -230,6 +231,7 @@ fn entry() -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
+            chain: Vec::new(),
         },
     }
 }
@@ -243,7 +245,6 @@ fn execute(adapter: &DispatchGuardAdapter, timeout_ms: u64) -> Result<ActionResu
             context: &CommandContext::default(),
         },
         ActionRequest::headless(Action::Click).with_timeout_ms(Some(timeout_ms)),
-        crate::ref_action::ref_action_single::dispatch_resolved,
     )
 }
 

@@ -11,6 +11,11 @@ pub fn execute_verified_action(
     lease: &InteractionLease,
 ) -> Result<ActionResult, AdapterError> {
     let action = request.action.clone();
+    if action.witnesses_effect() {
+        return crate::actions::witnessed_action::execute_witnessed_action(
+            adapter, handle, request, lease,
+        );
+    }
     if !action.requires_state_readback() {
         return adapter.execute_action(handle, request, lease);
     }
@@ -231,6 +236,8 @@ fn expected_insertion(
     String::from_utf16(&value).ok()
 }
 
+const REPLACED_TARGET_SUGGESTION: &str = "The action was sent and its target is gone, so the application may have replaced it. Do not repeat the action. Observe again first: 'snapshot --surface focused' shows the surface that now holds the application's focus.";
+
 fn verification_error(
     result: &ActionResult,
     observed: Option<&LiveElement>,
@@ -251,7 +258,11 @@ fn verification_error(
     if let Some(observed) = observed {
         details.insert("post_state".into(), serde_json::json!(observed.state));
     }
-    if error.suggestion.is_none() {
+    let replaced_after_delivery = error.code == crate::ErrorCode::StaleRef
+        && disposition != DeliverySemantics::not_delivered();
+    if replaced_after_delivery {
+        error.suggestion = Some(REPLACED_TARGET_SUGGESTION.into());
+    } else if error.suggestion.is_none() {
         error.suggestion = Some(
             "Inspect the returned state before deciding whether another action is needed.".into(),
         );

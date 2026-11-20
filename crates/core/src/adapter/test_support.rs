@@ -172,6 +172,7 @@ pub(crate) fn minimal_ref_entry(role: &str, name: Option<&str>) -> crate::RefEnt
             root_ref: None,
             path_is_absolute: false,
             path: crate::refs::RefPath::default(),
+            chain: Vec::new(),
         },
     }
 }
@@ -253,7 +254,8 @@ pub(crate) fn observed_tree(
     fn subtree(node: crate::AccessibilityNode) -> ObservedSubtree {
         let native_id = node.identity.native_id.clone();
         let retained = node.identity.retained_object.clone();
-        let typed = IdentifierEvidence::typed(native_id, Some(0), true);
+        let typed = IdentifierEvidence::typed(native_id, Some(0), true)
+            .with_borrowed_name(node.identity.name_is_borrowed);
         let evidence = LocatorEvidence {
             role: LocatorField::Known(node.role),
             name: field(node.identity.name),

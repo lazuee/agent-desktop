@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 pub struct CloseAppArgs {
     pub app: String,
     pub force: bool,
+    pub policy: crate::InteractionPolicy,
 }
 
 pub fn execute(args: CloseAppArgs, adapter: &dyn PlatformAdapter) -> Result<Value, AppError> {
@@ -27,7 +28,7 @@ pub fn execute(args: CloseAppArgs, adapter: &dyn PlatformAdapter) -> Result<Valu
         &expected,
         lease.deadline(),
     )?;
-    let report = adapter.close_app(&live, args.force, &lease)?;
+    let report = adapter.close_app(&live, args.force, &lease, args.policy)?;
     operation_response(
         &report,
         json!({

@@ -54,6 +54,7 @@ impl ObservationOps for HydrationContractAdapter {
     fn resolve_locator_anchor(
         &self,
         entry: &crate::RefEntry,
+        _base: Option<&NativeHandle>,
         _deadline: crate::Deadline,
     ) -> Result<NativeHandle, AdapterError> {
         self.strict_resolutions.fetch_add(1, Ordering::SeqCst);
@@ -267,6 +268,8 @@ fn assert_required_field_rejected(mode: Mode, query: LocatorQuery, field: &str) 
 
     assert_eq!(error.code.as_str(), "TIMEOUT");
     assert_eq!(details["kind"], "locator_selected_evidence_incomplete");
+    assert_eq!(details["cause"], "unreadable_elements");
+    assert_eq!(details["retryable"], true);
     assert_eq!(details["required"][field], true);
     assert_eq!(details["unknown"][field], true);
     assert_eq!(adapter.window_observations.load(Ordering::SeqCst), 2);

@@ -5,6 +5,8 @@ use std::time::Duration;
 use agent_desktop_core::AdapterError;
 
 use super::world::World;
+use crate::system::focus::prior_focus::PriorFocus;
+use crate::system::menu::nested_dialogs::NestedDialogs;
 use crate::system::process::liveness::Liveness;
 use crate::system::process::process_facts::ProcessFacts;
 use crate::system::process::process_lookup::Lookup;
@@ -65,7 +67,11 @@ pub(super) struct Fake {
     pub(super) dialog_after: Option<Duration>,
     pub(super) second_dialog_after: Option<Duration>,
     pub(super) nested_after: Option<Duration>,
+    pub(super) nested_complete: bool,
+    pub(super) nested_times_out: bool,
     pub(super) gone_after: Option<Duration>,
+    pub(super) prior: PriorFocus<()>,
+    pub(super) gives_back: bool,
 }
 
 impl Fake {
@@ -91,7 +97,11 @@ impl Fake {
             dialog_after: None,
             second_dialog_after: None,
             nested_after: None,
+            nested_complete: true,
+            nested_times_out: false,
             gone_after: None,
+            prior: PriorFocus::Held(()),
+            gives_back: true,
         }
     }
 
@@ -105,6 +115,8 @@ impl Fake {
 }
 
 impl World for Fake {
+    type Prior = ();
+
     fn is_protected(&self) -> Result<bool, AdapterError> {
         self.note("protected");
         self.protected.clone()
@@ -169,12 +181,19 @@ impl World for Fake {
         self.late.clone()
     }
 
-    fn nested_dialogs(&self) -> Vec<String> {
+    fn nested_dialogs(&self) -> Result<NestedDialogs, AdapterError> {
         self.note("nested");
-        match self.nested_after {
+        if self.nested_times_out {
+            return Err(self.timeout_error());
+        }
+        let titles = match self.nested_after {
             Some(after) if self.clock.get() >= after => vec!["Save Changes?".to_owned()],
             _ => Vec::new(),
-        }
+        };
+        Ok(NestedDialogs {
+            titles,
+            complete: self.nested_complete,
+        })
     }
 
     fn request_close(&self, _window: u32) -> Result<(), ControlError> {
@@ -219,6 +238,16 @@ impl World for Fake {
 
     fn on_wayland(&self) -> bool {
         self.wayland
+    }
+
+    fn read_prior(&self) -> PriorFocus<()> {
+        self.note("prior");
+        self.prior
+    }
+
+    fn watch_focus(&self, _prior: &()) -> bool {
+        self.note("watch_focus");
+        self.gives_back
     }
 
     fn timeout_error(&self) -> AdapterError {

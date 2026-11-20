@@ -80,14 +80,19 @@ impl ObservationOps for CapturingAdapter {
         Ok(saved_tree())
     }
 
-    fn list_apps(&self, _deadline: crate::Deadline) -> Result<Vec<crate::AppInfo>, AdapterError> {
-        Ok(vec![crate::AppInfo {
+    fn query_app_inventory(
+        &self,
+        query: crate::AppInventoryQuery<'_>,
+        _deadline: crate::Deadline,
+    ) -> Result<crate::AppInventory, AdapterError> {
+        Ok(query.answer(vec![crate::AppInfo {
+            aliases: Vec::new(),
             name: "Editor".into(),
             pid: crate::ProcessId::new(42),
             bundle_id: Some("com.example.Editor".into()),
             process_instance: Some("generation-1".into()),
             presentation: None,
-        }])
+        }]))
     }
 
     fn list_windows(
@@ -167,6 +172,11 @@ fn adapter_blocked_combo_is_refused_when_not_forced() {
         err.to_string().contains("--force"),
         "the refusal must tell the caller how to override, got: {err}"
     );
+    let suggestion = err.suggestion().unwrap_or_default();
+    assert!(
+        suggestion.contains("--force") && !suggestion.contains("--headed"),
+        "the suggestion must name --force and never headed mode, got: {suggestion}"
+    );
 }
 
 #[test]
@@ -174,7 +184,7 @@ fn force_bypasses_the_adapter_block() {
     execute(
         args("cmd+q", true),
         &BlockingAdapter,
-        &CommandContext::default(),
+        &CommandContext::default().with_headed(true),
     )
     .expect("--force must let the agent send a blocked combo");
 }
@@ -184,7 +194,7 @@ fn core_blocks_nothing_by_default() {
     execute(
         args("cmd+q", false),
         &AllowingAdapter,
-        &CommandContext::default(),
+        &CommandContext::default().with_headed(true),
     )
     .expect("core must not hardcode any block; the default adapter allows everything");
 }
@@ -193,10 +203,27 @@ fn core_blocks_nothing_by_default() {
 fn global_press_uses_only_caller_authorized_policy() {
     let adapter = CapturingAdapter::default();
 
-    execute(args("a", false), &adapter, &CommandContext::default()).unwrap();
+    let error = execute(args("a", false), &adapter, &CommandContext::default()).unwrap_err();
+    let crate::AppError::Adapter(error) = error else {
+        panic!("a policy refusal is an adapter error");
+    };
+    assert_eq!(error.code, crate::ErrorCode::PolicyDenied);
+    assert_eq!(*adapter.global_policy.lock().unwrap(), None);
+    let suggestion = error.suggestion.as_deref().unwrap_or_default();
+    assert!(
+        suggestion.starts_with("Name the target with --app"),
+        "the refusal must name the background route first, got: {suggestion}"
+    );
+
+    execute(
+        args("a", false),
+        &adapter,
+        &CommandContext::default().with_headed(true),
+    )
+    .unwrap();
     assert_eq!(
         *adapter.global_policy.lock().unwrap(),
-        Some(crate::InteractionPolicy::focus_fallback())
+        Some(crate::InteractionPolicy::headed())
     );
 
     execute(

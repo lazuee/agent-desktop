@@ -1,6 +1,7 @@
 use agent_desktop_core::{
-    AdapterError, Deadline, DeliverySemantics, ErrorCode, ProcessId, RendererKind, WindowFilter,
-    WindowInfo, system::launch_options::LaunchOptions, system::launch_result::LaunchResult,
+    AdapterError, Deadline, DeliverySemantics, ErrorCode, InteractionLease, LaunchFacts,
+    LaunchGuidance, ProcessId, RendererKind, WindowFilter, WindowInfo,
+    system::launch_options::LaunchOptions, system::launch_result::LaunchResult,
 };
 #[cfg(test)]
 use std::collections::BTreeMap;
@@ -11,19 +12,35 @@ use std::time::Duration;
 use self::launch_attach::matching_processes;
 use self::launch_attach::prepare;
 use super::app_ops::ProcessRow;
+use super::launch_focus::{give_back, read_foreground, startup_show};
 use super::launch_path::{
     child_environment_block, image_file_name, launch_identifier, validate_launch_options,
 };
+#[cfg(target_os = "windows")]
+use super::launch_path::{to_wide, to_wide_str};
 use super::process_identity;
 #[cfg(target_os = "windows")]
 use super::runtime::hresult::win32_last_error;
 use super::window::window_ops::list_windows_live;
 
+const ATTACHED: LaunchFacts = LaunchFacts {
+    attached: true,
+    activation_dispatched: false,
+    postcondition_observed: false,
+};
+
+const SPAWNED: LaunchFacts = LaunchFacts {
+    attached: false,
+    activation_dispatched: false,
+    postcondition_observed: true,
+};
+
 pub(crate) fn launch_app_impl(
     id: &str,
     options: &LaunchOptions,
-    parent_deadline: Deadline,
+    lease: InteractionLease,
 ) -> Result<LaunchResult, AdapterError> {
+    let parent_deadline = lease.deadline();
     let id = &launch_identifier(id).map_err(before_launch)?;
     validate_launch_options(options).map_err(before_launch)?;
     let deadline = if options.timeout_ms == 0 {
@@ -36,9 +53,25 @@ pub(crate) fn launch_app_impl(
     if let Some(attached) = attached {
         return Ok(attached);
     }
+    let prior = (!options.activate).then(read_foreground).flatten();
     let (pid, token) = create_process(&executable, options, deadline)?;
+    let focus_returned = prior.is_some_and(|prior| {
+        give_back(prior, pid, &lease, || {
+            matches!(observe_window_once(pid, &token, deadline), Ok(Some(_)))
+        })
+    });
+    if !options.activate {
+        drop(lease);
+    }
     let window = observe_window(pid, &token, options, deadline)?;
-    Ok(launch_result(id, pid, token, window))
+    let mut result = launch_result(id, pid, token, window, SPAWNED);
+    result.guidance.focus_returned = focus_returned;
+    if focus_returned {
+        if let Some(window) = result.window.as_mut() {
+            window.state.is_focused = false;
+        }
+    }
+    Ok(result)
 }
 
 /// The window a launch actually caused, or `None`. A process that presents no
@@ -72,6 +105,7 @@ fn launch_result(
     pid: ProcessId,
     process_instance: String,
     window: Option<WindowInfo>,
+    facts: LaunchFacts,
 ) -> LaunchResult {
     let renderer = window.as_ref().and_then(detect_renderer_from_window);
     LaunchResult {
@@ -82,9 +116,11 @@ fn launch_result(
         pid,
         process_instance: Some(process_instance),
         window,
-        cdp: None,
-        renderer,
-        suggestion: None,
+        guidance: LaunchGuidance {
+            renderer,
+            ..LaunchGuidance::default()
+        },
+        disposition: facts.disposition(),
     }
 }
 
@@ -198,8 +234,11 @@ fn create_process(
         crate::system::interaction_lease::INTERACTION_LEASE_HANDLE_ENV,
     )
     .map_err(before_launch)?;
+    let show = startup_show(options.activate);
     let startup = STARTUPINFOW {
         cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+        dwFlags: show.flags,
+        wShowWindow: show.show,
         ..Default::default()
     };
     let mut information = PROCESS_INFORMATION::default();
@@ -310,33 +349,6 @@ fn quote_arg(value: &str) -> String {
 #[cfg(test)]
 fn environment_block(overrides: &BTreeMap<String, String>) -> Result<Vec<u16>, AdapterError> {
     super::launch_path::environment_block(overrides)
-}
-
-#[cfg(target_os = "windows")]
-fn to_wide(path: &Path) -> Result<Vec<u16>, AdapterError> {
-    use std::os::windows::ffi::OsStrExt;
-    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
-    if wide.contains(&0) {
-        return Err(AdapterError::new(
-            ErrorCode::InvalidArgs,
-            "Launch path contains an interior NUL",
-        ));
-    }
-    wide.push(0);
-    Ok(wide)
-}
-
-#[cfg(target_os = "windows")]
-fn to_wide_str(value: &str) -> Result<Vec<u16>, AdapterError> {
-    if value.contains('\0') {
-        return Err(AdapterError::new(
-            ErrorCode::InvalidArgs,
-            "Launch command line contains an interior NUL",
-        ));
-    }
-    let mut wide: Vec<u16> = value.encode_utf16().collect();
-    wide.push(0);
-    Ok(wide)
 }
 
 fn already_running_error(pid: ProcessId, matches: &[ProcessRow]) -> AdapterError {

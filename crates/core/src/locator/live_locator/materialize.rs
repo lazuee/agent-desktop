@@ -27,7 +27,7 @@ pub(crate) fn materialize_refmap(
                 continue;
             }
             let mut entry = ref_entry(node, &tree.source, query);
-            entry.identity.unique_at_capture = proof.proves_node(&entry, index);
+            proof.prove_node(&mut entry, index);
             planned.push((index, entry));
         }
     }
@@ -59,12 +59,7 @@ pub(crate) fn addressability(evidence: &LocatorEvidence) -> (bool, bool) {
 pub(crate) fn selects_tokenless_entry(tree: &ObservedTree) -> bool {
     tree.nodes.iter().any(|node| {
         let (addressable, settled) = addressability(&node.evidence);
-        (addressable || !settled)
-            && !node
-                .evidence
-                .identifiers
-                .retained_object()
-                .is_some_and(crate::refs::ref_identity::is_element_token)
+        (addressable || !settled) && node.evidence.identifiers.element_token().is_none()
     })
 }
 
@@ -112,7 +107,11 @@ pub(crate) fn ref_entry(
                 .retained_object()
                 .map(str::to_owned),
             role: role.clone(),
-            name: node.evidence.name.meaningful_string(),
+            name: crate::refs::ref_identity::recorded_name(
+                node.evidence.name.meaningful_string(),
+                node.evidence.identifiers.name_is_borrowed(),
+                identifier.as_ref(),
+            ),
             value: node.evidence.value.meaningful_string(),
             description: node.evidence.description.meaningful_string(),
             native_id: identifier,
@@ -139,6 +138,7 @@ pub(crate) fn ref_entry(
             root_ref: None,
             path_is_absolute: false,
             path: node.path.clone(),
+            chain: Vec::new(),
         },
     };
     apply_source(&mut entry, source, &node.path);

@@ -1,11 +1,10 @@
 use super::{AXElement, properties::element::element_for_pid, surface_read};
-use agent_desktop_core::{AdapterError, SnapshotSurface};
-use std::time::Instant;
+use agent_desktop_core::{AdapterError, Deadline, ErrorCode, SnapshotSurface};
 
 #[cfg(target_os = "macos")]
 pub(crate) fn focused_surface_for_pid(
     pid: i32,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<Option<AXElement>, AdapterError> {
     let app = element_for_pid(pid);
     surface_read::element(&app, "AXFocusedWindow", deadline)
@@ -14,7 +13,7 @@ pub(crate) fn focused_surface_for_pid(
 #[cfg(target_os = "macos")]
 pub(crate) fn menu_element_for_pid(
     pid: i32,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<Option<AXElement>, AdapterError> {
     let identity = crate::system::process::process_identity::ProcessIdentity::capture(pid)?
         .ok_or_else(|| AdapterError::stale_ref_because("Menu application exited"))?;
@@ -23,11 +22,24 @@ pub(crate) fn menu_element_for_pid(
     })
 }
 
+/// The menu or popover the application shows, read in one bounded pass.
+#[cfg(target_os = "macos")]
+pub(crate) fn transient_surface_for_pid(
+    pid: i32,
+    deadline: Deadline,
+) -> Result<Option<AXElement>, AdapterError> {
+    let identity = crate::system::process::process_identity::ProcessIdentity::capture(pid)?
+        .ok_or_else(|| AdapterError::stale_ref_because("Application exited"))?;
+    super::app_menu::observe(identity, deadline, || {
+        super::app_menu::open_transient_surface(pid, deadline)
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn first_child_with_role_or_subrole(
     pid: i32,
     target: &str,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<Option<AXElement>, AdapterError> {
     let Some(window) = focused_surface_for_pid(pid, deadline)? else {
         return Ok(None);
@@ -37,30 +49,79 @@ fn first_child_with_role_or_subrole(
     })
 }
 
-/// Finds a sheet, popover or alert on this window or its direct children only.
+/// Finds a sheet, popover or alert on this window. A sheet or an alert is the
+/// window or one of its direct children. A popover hangs below the control it
+/// is anchored to, at any depth, so it is searched for through the window.
 #[cfg(target_os = "macos")]
 pub(crate) fn surface_in_window(
     window: &AXElement,
     surface: SnapshotSurface,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<Option<AXElement>, AdapterError> {
-    let target = match surface {
-        SnapshotSurface::Sheet => "AXSheet",
-        SnapshotSurface::Popover => "AXPopover",
+    match surface {
+        SnapshotSurface::Sheet => first_in_window(window, deadline, |element| {
+            role_or_subrole_matches(element, "AXSheet", deadline)
+        }),
+        SnapshotSurface::Popover => popover_in_window(window, deadline),
         SnapshotSurface::Alert => {
-            return first_in_window(window, deadline, |element| is_alert(element, deadline));
+            first_in_window(window, deadline, |element| is_alert(element, deadline))
         }
-        _ => return Err(AdapterError::not_supported("window-owned surface")),
-    };
-    first_in_window(window, deadline, |element| {
-        role_or_subrole_matches(element, target, deadline)
-    })
+        _ => Err(AdapterError::not_supported("window-owned surface")),
+    }
+}
+
+/// The first popover in `window`, nearest the window first, through the
+/// bounded search that finds an open menu. None only when every element that
+/// search reads was read: a search cut at its element limit fails as not found
+/// and says it is incomplete.
+#[cfg(target_os = "macos")]
+pub(super) fn popover_in_window(
+    window: &AXElement,
+    deadline: Deadline,
+) -> Result<Option<AXElement>, AdapterError> {
+    super::app_menu::find_surface_descendant_with(
+        window.clone(),
+        "window".into(),
+        deadline,
+        |element, expand| {
+            if role_or_subrole_matches(element, "AXPopover", deadline)? {
+                return Ok((true, Vec::new()));
+            }
+            if !expand {
+                return Ok((false, Vec::new()));
+            }
+            Ok((
+                false,
+                surface_read::elements(element, "AXChildren", deadline)?,
+            ))
+        },
+    )
+    .map(|found| found.map(|(_, popover)| popover))
+    .map_err(popover_search_error)
+}
+
+fn popover_search_error(error: AdapterError) -> AdapterError {
+    let cut = error
+        .details
+        .as_ref()
+        .is_some_and(|details| details["kind"] == "surface_search_limit");
+    if !cut {
+        return error;
+    }
+    AdapterError::new(
+        ErrorCode::ElementNotFound,
+        "No popover among the elements the search may read; the rest was not searched",
+    )
+    .with_details(serde_json::json!({
+        "kind": "popover_search_limit",
+        "complete": false,
+    }))
 }
 
 #[cfg(target_os = "macos")]
 fn first_in_window(
     window: &AXElement,
-    deadline: Instant,
+    deadline: Deadline,
     matches: impl Fn(&AXElement) -> Result<bool, AdapterError>,
 ) -> Result<Option<AXElement>, AdapterError> {
     if matches(window)? {
@@ -78,7 +139,7 @@ fn first_in_window(
 pub(super) fn role_or_subrole_matches(
     element: &AXElement,
     target: &str,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<bool, AdapterError> {
     if surface_read::string(element, "AXRole", deadline)?.as_deref() == Some(target) {
         return Ok(true);
@@ -89,7 +150,7 @@ pub(super) fn role_or_subrole_matches(
 #[cfg(target_os = "macos")]
 pub(crate) fn sheet_for_pid(
     pid: i32,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<Option<AXElement>, AdapterError> {
     first_child_with_role_or_subrole(pid, "AXSheet", deadline)
 }
@@ -97,15 +158,18 @@ pub(crate) fn sheet_for_pid(
 #[cfg(target_os = "macos")]
 pub(crate) fn popover_for_pid(
     pid: i32,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<Option<AXElement>, AdapterError> {
-    first_child_with_role_or_subrole(pid, "AXPopover", deadline)
+    match focused_surface_for_pid(pid, deadline)? {
+        Some(window) => popover_in_window(&window, deadline),
+        None => Ok(None),
+    }
 }
 
 #[cfg(target_os = "macos")]
 pub(crate) fn alert_for_pid(
     pid: i32,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<Option<AXElement>, AdapterError> {
     let app = element_for_pid(pid);
     let mut windows = surface_read::elements(&app, "AXWindows", deadline)?;
@@ -126,45 +190,17 @@ pub(crate) fn alert_for_pid(
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn is_alert(element: &AXElement, deadline: Instant) -> Result<bool, AdapterError> {
+pub(super) fn is_alert(element: &AXElement, deadline: Deadline) -> Result<bool, AdapterError> {
     let role = surface_read::string(element, "AXRole", deadline)?;
     let subrole = surface_read::string(element, "AXSubrole", deadline)?;
     Ok(matches!(role.as_deref(), Some("AXSheet"))
         || matches!(
             subrole.as_deref(),
-            Some("AXDialog") | Some("AXAlert") | Some("AXSheet")
+            Some("AXDialog" | "AXSystemDialog" | "AXAlert" | "AXSheet")
         ))
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn is_menu_open(pid: i32, deadline: Instant) -> Result<bool, AdapterError> {
+pub(crate) fn is_menu_open(pid: i32, deadline: Deadline) -> Result<bool, AdapterError> {
     Ok(menu_element_for_pid(pid, deadline)?.is_some())
-}
-
-#[cfg(not(target_os = "macos"))]
-macro_rules! unsupported_surface {
-    ($name:ident) => {
-        pub(crate) fn $name(
-            _pid: i32,
-            _deadline: Instant,
-        ) -> Result<Option<AXElement>, AdapterError> {
-            Ok(None)
-        }
-    };
-}
-
-#[cfg(not(target_os = "macos"))]
-unsupported_surface!(focused_surface_for_pid);
-#[cfg(not(target_os = "macos"))]
-unsupported_surface!(menu_element_for_pid);
-#[cfg(not(target_os = "macos"))]
-unsupported_surface!(sheet_for_pid);
-#[cfg(not(target_os = "macos"))]
-unsupported_surface!(popover_for_pid);
-#[cfg(not(target_os = "macos"))]
-unsupported_surface!(alert_for_pid);
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn is_menu_open(_pid: i32, _deadline: Instant) -> Result<bool, AdapterError> {
-    Ok(false)
 }

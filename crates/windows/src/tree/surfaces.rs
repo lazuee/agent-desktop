@@ -23,6 +23,16 @@ pub(crate) fn surface_root(
     deadline: Deadline,
 ) -> Result<UIAElement, AdapterError> {
     match (root, surface) {
+        (ObservationRoot::Application { app, .. }, SnapshotSurface::Popover) => {
+            let popover = crate::tree::surface_inventory::first_popover(app.pid, deadline)?
+                .ok_or_else(|| {
+                    AdapterError::new(
+                        ErrorCode::WindowNotFound,
+                        "No popover is open in this application",
+                    )
+                })?;
+            root_from_hwnd(popover as isize, deadline)
+        }
         (ObservationRoot::Application { .. }, _) => {
             Err(AdapterError::not_supported("application observation root"))
         }
@@ -63,6 +73,16 @@ pub(crate) fn surface_root(
                     )
                 })?;
             root_from_hwnd(location.root_handle(), deadline)
+        }
+        (ObservationRoot::Window(window), SnapshotSurface::Popover) => {
+            let popover = crate::tree::surface_inventory::first_popover(window.pid, deadline)?
+                .ok_or_else(|| {
+                    AdapterError::new(
+                        ErrorCode::WindowNotFound,
+                        "No popover is open in this application",
+                    )
+                })?;
+            root_from_hwnd(popover as isize, deadline)
         }
         (ObservationRoot::Window(window), SnapshotSurface::StartMenu)
         | (ObservationRoot::Window(window), SnapshotSurface::Taskbar)

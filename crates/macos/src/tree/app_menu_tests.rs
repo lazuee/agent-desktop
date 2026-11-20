@@ -1,5 +1,5 @@
 use super::*;
-use std::time::Duration;
+use agent_desktop_core::Deadline;
 
 #[test]
 fn only_complete_menu_root_absence_gets_a_typed_surface_error() {
@@ -57,62 +57,50 @@ fn current_identity() -> crate::system::process::process_identity::ProcessIdenti
 #[test]
 fn menu_observation_retries_native_transience_but_not_deterministic_incompleteness() {
     let mut reads = 0;
-    let result = observe(
-        current_identity(),
-        Instant::now() + Duration::from_secs(1),
-        || {
-            reads += 1;
-            if reads == 1 {
-                Err(surface_read::map_error(
-                    "AXRole",
-                    accessibility_sys::kAXErrorCannotComplete,
-                ))
-            } else {
-                Ok("fresh menu")
-            }
-        },
-    );
+    let result = observe(current_identity(), Deadline::after(1000).unwrap(), || {
+        reads += 1;
+        if reads == 1 {
+            Err(surface_read::map_error(
+                "AXRole",
+                accessibility_sys::kAXErrorCannotComplete,
+            ))
+        } else {
+            Ok("fresh menu")
+        }
+    });
     assert_eq!(result.unwrap(), "fresh menu");
     assert_eq!(reads, 2);
     let mut reads = 0;
-    let error = observe(
-        current_identity(),
-        Instant::now() + Duration::from_secs(1),
-        || {
-            reads += 1;
-            match reads {
-                1 | 3 => Err(surface_read::map_error(
-                    "AXRole",
-                    accessibility_sys::kAXErrorInvalidUIElement,
-                )),
-                2 => Err(surface_read::map_error(
-                    "AXRole",
-                    accessibility_sys::kAXErrorCannotComplete,
-                )),
-                _ => Ok("must not reacquire again"),
-            }
-        },
-    )
+    let error = observe(current_identity(), Deadline::after(1000).unwrap(), || {
+        reads += 1;
+        match reads {
+            1 | 3 => Err(surface_read::map_error(
+                "AXRole",
+                accessibility_sys::kAXErrorInvalidUIElement,
+            )),
+            2 => Err(surface_read::map_error(
+                "AXRole",
+                accessibility_sys::kAXErrorCannotComplete,
+            )),
+            _ => Ok("must not reacquire again"),
+        }
+    })
     .unwrap_err();
     assert_eq!(reads, 3);
     assert!(!error.permits_retry_by_default());
     assert_eq!(error.details.unwrap()["menu_root_reacquired"], true);
     for expected in [surface_limit_error(), invalid_root_error()] {
         let mut attempts = 0;
-        let error = observe::<()>(
-            current_identity(),
-            Instant::now() + Duration::from_secs(1),
-            || {
-                attempts += 1;
-                assert_eq!(attempts, 1);
-                Err(expected.clone())
-            },
-        )
+        let error = observe::<()>(current_identity(), Deadline::after(1000).unwrap(), || {
+            attempts += 1;
+            assert_eq!(attempts, 1);
+            Err(expected.clone())
+        })
         .unwrap_err();
         assert_eq!(error.details, expected.details);
         assert!(!error.permits_retry_by_default());
     }
-    let error = observe::<()>(current_identity(), Instant::now(), || {
+    let error = observe::<()>(current_identity(), Deadline::after(0).unwrap(), || {
         panic!("expired observation must not read a menu")
     })
     .unwrap_err();
@@ -144,15 +132,11 @@ fn terminal_menu_errors_are_not_retried() {
         ),
     ] {
         let mut reads = 0;
-        let error = observe::<()>(
-            current_identity(),
-            Instant::now() + Duration::from_secs(1),
-            || {
-                reads += 1;
-                assert_eq!(reads, 1);
-                Err(AdapterError::new(code.clone(), "terminal").with_details(details.clone()))
-            },
-        )
+        let error = observe::<()>(current_identity(), Deadline::after(1000).unwrap(), || {
+            reads += 1;
+            assert_eq!(reads, 1);
+            Err(AdapterError::new(code.clone(), "terminal").with_details(details.clone()))
+        })
         .unwrap_err();
         assert_eq!(error.code, code);
         assert_eq!(reads, 1);
@@ -176,7 +160,7 @@ fn process_exit_rejects_menu_reads_before_and_after_observation() {
             child.wait().unwrap();
         }
         let mut reads = 0;
-        let error = observe(identity, Instant::now() + Duration::from_secs(1), || {
+        let error = observe(identity, Deadline::after(1000).unwrap(), || {
             reads += 1;
             assert_ne!(phase, "before");
             child.kill().unwrap();
@@ -248,9 +232,9 @@ fn surface_node_limit_is_explicitly_incomplete() {
 
 #[test]
 fn menus_beyond_eight_wrappers_remain_discoverable() {
-    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = Deadline::after(5000).unwrap();
     for target_depth in [9, 11, 30] {
-        let found = find_menu_descendant_with(0, "app".into(), deadline, |depth| {
+        let found = find_surface_descendant_with(0, "app".into(), deadline, |depth, _| {
             Ok((*depth == target_depth, vec![depth + 1]))
         })
         .unwrap();
@@ -261,11 +245,11 @@ fn menus_beyond_eight_wrappers_remain_discoverable() {
 #[test]
 fn cyclic_menu_search_remains_bounded_and_explicitly_incomplete() {
     let mut reads = 0;
-    let error = find_menu_descendant_with(
+    let error = find_surface_descendant_with(
         0,
         "app".into(),
-        Instant::now() + std::time::Duration::from_secs(5),
-        |node| {
+        Deadline::after(5000).unwrap(),
+        |node, _| {
             reads += 1;
             Ok((false, vec![*node]))
         },
@@ -277,19 +261,22 @@ fn cyclic_menu_search_remains_bounded_and_explicitly_incomplete() {
 
 #[test]
 fn expired_menu_search_never_reads_a_node() {
-    let result = find_menu_descendant_with::<()>((), "app".into(), Instant::now(), |_| {
-        panic!("expired search must not call AX")
-    });
+    let result = find_surface_descendant_with::<()>(
+        (),
+        "app".into(),
+        Deadline::after(0).unwrap(),
+        |_, _| panic!("expired search must not call AX"),
+    );
     assert_eq!(result.unwrap_err().code, ErrorCode::Timeout);
 }
 
 #[test]
 fn incomplete_content_branch_does_not_hide_a_menu_in_a_sibling() {
-    let result = find_menu_descendant_with(
+    let result = find_surface_descendant_with(
         0,
         "app".into(),
-        Instant::now() + std::time::Duration::from_secs(5),
-        |node| match node {
+        Deadline::after(5000).unwrap(),
+        |node, _| match node {
             0 => Ok((false, vec![1, 2])),
             1 => Err(surface_limit_error()),
             2 => Ok((true, vec![])),
@@ -301,11 +288,11 @@ fn incomplete_content_branch_does_not_hide_a_menu_in_a_sibling() {
 
 #[test]
 fn an_incomplete_branch_cannot_prove_menu_absence() {
-    let result = find_menu_descendant_with(
+    let result = find_surface_descendant_with(
         0,
         "app".into(),
-        Instant::now() + std::time::Duration::from_secs(5),
-        |node| match node {
+        Deadline::after(5000).unwrap(),
+        |node, _| match node {
             0 => Ok((false, vec![1, 2])),
             1 => Err(surface_limit_error()),
             _ => Ok((false, vec![])),
@@ -316,14 +303,14 @@ fn an_incomplete_branch_cannot_prove_menu_absence() {
 
 #[test]
 fn shallow_menu_precedes_unbounded_content_and_permission_errors_stay_terminal() {
-    let deadline = Instant::now() + std::time::Duration::from_secs(5);
-    let found = find_menu_descendant_with(0, "app".into(), deadline, |node| match node {
+    let deadline = Deadline::after(5000).unwrap();
+    let found = find_surface_descendant_with(0, "app".into(), deadline, |node, _| match node {
         0 => Ok((false, vec![1, 2])),
         1 => Ok((false, vec![1])),
         _ => Ok((true, vec![])),
     });
     assert_eq!(found.unwrap(), Some(("app/children/1".into(), 2)));
-    let denied = find_menu_descendant_with(0, "app".into(), deadline, |node| match node {
+    let denied = find_surface_descendant_with(0, "app".into(), deadline, |node, _| match node {
         0 => Ok((false, vec![1, 2])),
         1 => Err(AdapterError::new(ErrorCode::PermDenied, "denied")),
         _ => panic!("permission failure must stop all further AX reads"),
@@ -340,19 +327,15 @@ fn invalidated_menu_roots_are_reacquired_once_and_permission_errors_are_terminal
         (kAXErrorAPIDisabled, 1),
     ] {
         let mut reads = 0;
-        let result = reacquire_once(
-            Instant::now() + std::time::Duration::from_secs(1),
-            &mut false,
-            || {
-                reads += 1;
-                if reads <= failures {
-                    Err(AdapterError::new(ErrorCode::PermDenied, "read failed")
-                        .with_details(serde_json::json!({ "ax_error": ax_error })))
-                } else {
-                    Ok("fresh root")
-                }
-            },
-        );
+        let result = reacquire_once(Deadline::after(1000).unwrap(), &mut false, || {
+            reads += 1;
+            if reads <= failures {
+                Err(AdapterError::new(ErrorCode::PermDenied, "read failed")
+                    .with_details(serde_json::json!({ "ax_error": ax_error })))
+            } else {
+                Ok("fresh root")
+            }
+        });
         if ax_error == kAXErrorAPIDisabled {
             assert_eq!(reads, 1);
             assert_eq!(result.unwrap_err().code, ErrorCode::PermDenied);
@@ -371,4 +354,43 @@ fn invalidated_menu_roots_are_reacquired_once_and_permission_errors_are_terminal
             }
         }
     }
+}
+
+#[test]
+fn the_items_of_a_content_container_are_checked_but_not_opened() {
+    let deadline = Deadline::after(5000).unwrap();
+    let wide = super::super::surface_inventory::ANCHOR_CHILD_LIMIT + 1;
+    let mut opened = Vec::new();
+    let found = find_surface_descendant_with(0_usize, "app".into(), deadline, |node, expand| {
+        if expand {
+            opened.push(*node);
+        }
+        Ok(match *node {
+            0 => (false, vec![1, 2]),
+            1 => (false, (100..100 + wide).collect()),
+            2 => (false, vec![3]),
+            3 => (true, vec![]),
+            item if item >= 100 => (false, vec![item * 10]),
+            _ => (false, vec![]),
+        })
+    })
+    .unwrap();
+
+    assert_eq!(found.map(|(_, node)| node), Some(3));
+    assert!(opened.iter().all(|node| *node < 100));
+}
+
+#[test]
+fn a_menu_among_the_items_of_a_content_container_is_still_found() {
+    let deadline = Deadline::after(5000).unwrap();
+    let wide = super::super::surface_inventory::ANCHOR_CHILD_LIMIT + 1;
+    let found = find_surface_descendant_with(0_usize, "app".into(), deadline, |node, _| {
+        Ok(match *node {
+            0 => (false, (100..100 + wide).collect()),
+            node => (node == 100 + wide - 1, vec![]),
+        })
+    })
+    .unwrap();
+
+    assert_eq!(found.map(|(_, node)| node), Some(100 + wide - 1));
 }

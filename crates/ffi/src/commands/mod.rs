@@ -12,11 +12,14 @@ pub(crate) mod wait;
 use agent_desktop_core::{AdapterError, AppError, ErrorCode};
 
 /// Converts a core `AppError` into an `AdapterError` for use with
-/// `set_last_error`. `AppError::Adapter` is already an `AdapterError`; a
-/// permission-denied io error keeps `ErrorCode::PermDenied`, the code the
-/// JSON envelope reports for it, and every other variant wraps its payload as
-/// `ErrorCode::Internal`.
+/// `set_last_error`. An `AdapterError` carried by the error (directly or inside
+/// an io error) is returned whole, keeping its suggestion and details. Otherwise
+/// a permission-denied io error keeps `ErrorCode::PermDenied`, and every other
+/// variant wraps its payload as `ErrorCode::Internal`.
 pub(crate) fn app_error_to_adapter(err: AppError) -> AdapterError {
+    if let Some(carried) = err.adapter_error() {
+        return carried.clone();
+    }
     match err {
         AppError::Adapter(e) => e,
         AppError::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -104,6 +107,24 @@ mod tests {
         let result = app_error_to_adapter(error);
         assert_eq!(result.code, ErrorCode::PermDenied);
         assert_eq!(result.code.as_str(), envelope_code);
+    }
+
+    #[test]
+    fn io_error_carrying_an_adapter_error_keeps_its_suggestion_and_details() {
+        let io = agent_desktop_core::private_file_error(
+            std::path::Path::new("/tmp/state.json"),
+            std::io::Error::new(std::io::ErrorKind::NotFound, "gone"),
+            "Restore the state file",
+        );
+        let result = app_error_to_adapter(AppError::Io(io));
+        assert_eq!(result.suggestion.as_deref(), Some("Restore the state file"));
+        assert_eq!(
+            result
+                .details
+                .as_ref()
+                .and_then(|details| details["path"].as_str()),
+            Some("/tmp/state.json")
+        );
     }
 
     #[test]

@@ -1,11 +1,9 @@
-use crate::AppError;
 pub(crate) use crate::RefEntry;
+use crate::{AppError, refs::ref_map_wire::RefMapWire};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::hash_map::RandomState;
+use std::collections::{HashMap, HashSet, hash_map::RandomState};
 use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,6 +36,7 @@ pub fn validate_ref_id(ref_id: &str) -> Result<(), AppError> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(into = "RefMapWire", try_from = "RefMapWire")]
 pub struct RefMap {
     inner: HashMap<String, RefEntry>,
     counter: u32,
@@ -372,10 +371,12 @@ pub(crate) mod ref_geometry;
 pub mod ref_identity;
 pub(crate) mod ref_identity_match;
 pub(crate) mod ref_live_predicate;
+pub(crate) mod ref_map_wire;
 pub(crate) mod ref_process;
 pub(crate) mod ref_resolve_deadline;
 pub(crate) mod ref_root_read;
 pub(crate) mod ref_scope;
+pub(crate) mod ref_scope_resolve;
 pub(crate) mod ref_skeleton_anchors;
 pub(crate) mod ref_source;
 pub(crate) mod ref_token;
@@ -386,14 +387,14 @@ pub(crate) mod refs_test_support;
 pub(crate) mod refs_validate;
 pub(crate) mod resolve_attempt_outcome;
 pub mod resolve_errors;
+pub mod resolve_retry;
 pub mod resolve_saved_ref;
 #[cfg(test)]
 #[path = "refs_serde_tests.rs"]
 mod serde_tests;
 #[cfg(test)]
-#[path = "refs_tests.rs"]
-mod tests;
-
-#[cfg(test)]
 #[path = "refs_size_tests.rs"]
 mod size_tests;
+#[cfg(test)]
+#[path = "refs_tests.rs"]
+mod tests;

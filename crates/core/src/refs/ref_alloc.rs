@@ -27,7 +27,11 @@ pub(crate) fn ref_entry_from_node(
         identity: crate::RefEntryIdentity {
             retained_object: node.identity.retained_object.clone(),
             role: node.role.clone(),
-            name: meaningful_string(node.identity.name.clone()),
+            name: crate::refs::ref_identity::recorded_name(
+                meaningful_string(node.identity.name.clone()),
+                node.identity.name_is_borrowed,
+                node.identity.native_id.as_ref(),
+            ),
             value: meaningful_string(node.identity.value.clone()),
             description: meaningful_string(node.identity.description.clone()),
             native_id: node
@@ -58,6 +62,7 @@ pub(crate) fn ref_entry_from_node(
             root_ref,
             path_is_absolute: false,
             path: smallvec::SmallVec::from_slice(path),
+            chain: Vec::new(),
         },
     }
 }
@@ -259,9 +264,12 @@ impl<'a> AllocationPlan<'a> {
         }
     }
 
-    fn proven(&self, entry: &RefEntry, path: &[usize]) -> bool {
-        self.capture
-            .is_some_and(|capture| capture.proves(entry, path))
+    /// Builds `entry` under the capture rule: proven when it is unique in the
+    /// window or inside the chain of ancestors recorded on it.
+    fn prove(&self, entry: &mut RefEntry, path: &[usize]) {
+        if let Some(capture) = self.capture {
+            capture.prove_at(entry, path);
+        }
     }
 }
 
@@ -292,7 +300,7 @@ fn allocate_refs_at_path(
             path,
         );
         entry.scope.path_is_absolute = config.scope.root_ref_id.is_some();
-        entry.identity.unique_at_capture = plan.proven(&entry, path);
+        plan.prove(&mut entry, path);
         entry.source.renderer_accessibility_forced = config.options.force_renderer_accessibility;
         if !config.options.include_bounds && has_meaningful_identity(&entry) {
             entry.geometry.bounds = None;
@@ -304,7 +312,7 @@ fn allocate_refs_at_path(
 
     if is_skeleton_anchor {
         let mut entry = skeleton_anchor_entry(&node, &config.source, path);
-        entry.identity.unique_at_capture = plan.proven(&entry, path);
+        plan.prove(&mut entry, path);
         entry.source.renderer_accessibility_forced = config.options.force_renderer_accessibility;
         if !config.options.include_bounds && has_meaningful_identity(&entry) {
             entry.geometry.bounds = None;

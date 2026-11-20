@@ -3,8 +3,8 @@ use super::disposition::settle_unknown_delivery;
 use crate::cli::Cli;
 use crate::cli_args::batch::BatchArgs;
 use agent_desktop_core::{
-    ActionOps, AdapterError, AppError, AppInfo, Deadline, DeliveryDisposition, DeliverySemantics,
-    ErrorCode, InputOps, InteractionLease, ObservationOps, OperationReport, PermissionReport,
+    ActionOps, AdapterError, AppError, Deadline, DeliveryDisposition, DeliverySemantics, ErrorCode,
+    InputOps, InteractionLease, ObservationOps, OperationReport, PermissionReport,
     RetryDisposition, SystemOps, WindowFilter, WindowInfo, context::CommandContext,
 };
 use clap::Parser;
@@ -21,8 +21,12 @@ impl ObservationOps for FailingAdapter {
         Err(self.0.clone())
     }
 
-    fn list_apps(&self, _deadline: Deadline) -> Result<Vec<AppInfo>, AdapterError> {
-        Err(self.0.clone())
+    fn query_app_inventory(
+        &self,
+        query: agent_desktop_core::AppInventoryQuery<'_>,
+        _deadline: Deadline,
+    ) -> Result<agent_desktop_core::AppInventory, AdapterError> {
+        Ok(query.answer({ Err(self.0.clone()) }?))
     }
 }
 
@@ -62,7 +66,7 @@ fn failure_of(adapter_failure: AdapterError, arguments: &[&str]) -> AdapterError
         command,
         &FailingAdapter(adapter_failure),
         &PermissionReport::default(),
-        &CommandContext::default(),
+        &CommandContext::default().with_headed(true),
     ) {
         Err(AppError::Adapter(error)) => error,
         other => panic!("expected an adapter error, got {other:?}"),
@@ -177,7 +181,7 @@ fn batch_entries_settle_their_failures_by_their_own_command() {
         },
         &FailingAdapter(AdapterError::timeout("stalled")),
         &PermissionReport::default(),
-        &CommandContext::default(),
+        &CommandContext::default().with_headed(true),
     )
     .expect("a batch reports the failure of each entry");
 

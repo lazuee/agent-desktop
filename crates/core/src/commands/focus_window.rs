@@ -9,7 +9,12 @@ pub struct FocusWindowArgs {
     pub title: Option<String>,
 }
 
-pub fn execute(args: FocusWindowArgs, adapter: &dyn PlatformAdapter) -> Result<Value, AppError> {
+pub fn execute(
+    args: FocusWindowArgs,
+    adapter: &dyn PlatformAdapter,
+    policy: crate::InteractionPolicy,
+) -> Result<Value, AppError> {
+    policy.require(crate::Effect::FocusSteal, "focus-window")?;
     let deadline = crate::Deadline::standard()?;
     let filter = WindowFilter {
         focused_only: false,
@@ -45,7 +50,10 @@ pub fn execute(args: FocusWindowArgs, adapter: &dyn PlatformAdapter) -> Result<V
     let lease = adapter.acquire_interaction_lease(deadline)?;
     let focused = crate::system::window_focus::focus_and_confirm(adapter, &window, &lease)?;
     debug_assert_eq!(focused.id, window_id);
-    Ok(json!({ "focused": focused }))
+    Ok(json!({
+        "disposition": crate::DeliverySemantics::delivered_verified(),
+        "focused": focused,
+    }))
 }
 
 #[cfg(test)]

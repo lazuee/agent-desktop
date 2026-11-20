@@ -3,8 +3,8 @@ use super::{
     token_mismatch,
 };
 use agent_desktop_core::{
-    ElementIdentifier, IdentifierKind, ProcessId, RefCapabilities, RefEntry, RefEntryIdentity,
-    RefGeometry, RefProcess, RefScope, RefSource, SnapshotSurface,
+    Deadline, ElementIdentifier, IdentifierKind, ProcessId, RefCapabilities, RefEntry,
+    RefEntryIdentity, RefGeometry, RefProcess, RefScope, RefSource, SnapshotSurface,
 };
 
 fn entry(role: &str) -> RefEntry {
@@ -43,6 +43,7 @@ fn entry(role: &str) -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::smallvec![0, 1],
+            chain: Vec::new(),
         },
     }
 }
@@ -142,7 +143,20 @@ fn token_mismatch_accepts_only_the_saved_element() {
 #[test]
 fn a_ref_without_a_token_keeps_the_attribute_path() {
     let stored = entry("button");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = Deadline::after(5000).unwrap();
 
     assert!(resolve_saved_token(&stored, deadline).unwrap().is_none());
+}
+
+#[test]
+fn a_bare_token_saved_before_core_tagged_tokens_is_refused_not_resolved_by_fields() {
+    let mut saved = entry("button");
+    saved.identity.unique_at_capture = true;
+    saved.identity.retained_object = Some("axtok1:00ff".into());
+    let error = super::super::retained::refuse_untagged_token(&saved).expect_err("refused");
+    assert_eq!(error.code, agent_desktop_core::ErrorCode::StaleRef);
+    assert_eq!(error.details.as_ref().expect("details")["reason"], "legacy");
+
+    saved.identity.retained_object = Some("token:axtok1:00ff".into());
+    assert!(super::super::retained::refuse_untagged_token(&saved).is_ok());
 }

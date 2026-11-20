@@ -11,10 +11,10 @@ use crate::actions::physical_target::tests::fake::FakeWorld;
 use crate::input::physical::target_pointer::{ClickSpec, click_steps};
 use crate::system::x11::window::window_x11_state::WindowX11State;
 use crate::tree::element::ancestry::Ancestry;
-use crate::tree::live::test_support::{read_of, ref_entry, words};
 use crate::tree::live_read::live_project::{live_element, pointer_rect};
 use crate::tree::observe::node_evidence::evidence_for;
 use crate::tree::placement::Placement;
+use crate::tree::test_support::helpers::{read_of, ref_entry, words};
 use crate::tree::vocabulary::state_bits::{ENABLED, SHOWING, VISIBLE};
 use crate::tree::{AtspiElement, Extents, Field, ObservedRead};
 
@@ -86,6 +86,7 @@ impl ObservationOps for Sidebar {
     fn resolve_locator_anchor(
         &self,
         _: &RefEntry,
+        _base: Option<&NativeHandle>,
         _: Deadline,
     ) -> Result<NativeHandle, AdapterError> {
         self.events.lock().unwrap().push("resolve".into());
@@ -106,7 +107,7 @@ impl ObservationOps for Sidebar {
         _: &ObservationRequest,
     ) -> Result<ObservedTree, AdapterError> {
         let scene = self.scene.lock().unwrap();
-        let evidence = evidence_for(&scene.0, &scene.0.node.element);
+        let evidence = evidence_for(&scene.0, &scene.0.node.element, "");
         ObservedTree::from_roots(
             vec![ObservedSubtree::new(evidence, Vec::new(), true, None)],
             ObservationSource::from_root(&root, root.surface()),
@@ -117,7 +118,7 @@ impl ObservationOps for Sidebar {
 
     fn get_live_element(&self, _: &NativeHandle, _: Deadline) -> Result<LiveElement, AdapterError> {
         let scene = self.scene.lock().unwrap();
-        let evidence = evidence_for(&scene.0, &scene.0.node.element);
+        let evidence = evidence_for(&scene.0, &scene.0.node.element, "");
         live_element(&scene.0, &evidence, &scene.1, false)
     }
 
@@ -132,7 +133,12 @@ impl ObservationOps for Sidebar {
 }
 
 impl ActionOps for Sidebar {
-    fn scroll_into_view(&self, _: &NativeHandle, _: &InteractionLease) -> Result<(), AdapterError> {
+    fn scroll_into_view(
+        &self,
+        _: &NativeHandle,
+        _: agent_desktop_core::InteractionPolicy,
+        _: &InteractionLease,
+    ) -> Result<(), AdapterError> {
         self.events.lock().unwrap().push("scroll".into());
         self.scene.lock().unwrap().1.node.as_mut().unwrap().y = 60;
         Ok(())

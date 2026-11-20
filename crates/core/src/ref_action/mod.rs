@@ -11,6 +11,7 @@ use serde_json::json;
 pub(crate) mod presentation;
 pub(crate) mod ref_action_actionability;
 pub(crate) mod ref_action_context;
+pub(crate) mod ref_action_landing;
 pub(crate) mod ref_action_poll;
 pub(crate) mod ref_action_poll_state;
 pub(crate) mod ref_action_single;
@@ -69,14 +70,10 @@ pub(crate) fn dispatch_resolved_landing(
     mut request: ActionRequest,
     lease: &crate::InteractionLease,
 ) -> Result<(ActionResult, NativeHandle), AppError> {
-    let process_instance = target
-        .entry
-        .process
-        .process_instance
-        .as_deref()
-        .filter(|instance| !instance.is_empty())
-        .ok_or_else(|| AdapterError::stale_ref_because("target process instance is unavailable"))?;
-    let expected_process = crate::ProcessIdentity::new(target.entry.process.pid, process_instance);
+    let expected_process =
+        target.entry.process.identity().ok_or_else(|| {
+            AdapterError::stale_ref_because("target process instance is unavailable")
+        })?;
     let mut handle = resolve_saved_ref(target.adapter, target.entry, target.deadline, Some(lease))
         .map_err(mark_pre_dispatch_resolution_failure)
         .inspect_err(|error| {
@@ -97,10 +94,12 @@ pub(crate) fn dispatch_resolved_landing(
             ) {
                 return Err(error.into());
             }
-            let recovered = match target
-                .adapter
-                .scroll_ref_into_view(target.entry, &handle, lease)
-            {
+            let recovered = match target.adapter.scroll_ref_into_view(
+                target.entry,
+                &handle,
+                request.policy,
+                lease,
+            ) {
                 Ok(recovered) => recovered,
                 Err(scroll_error) => {
                     trace_scroll_error(&target, &scroll_error);
@@ -129,7 +128,7 @@ pub(crate) fn dispatch_resolved_landing(
         preflight.pointer_delivery,
         actionability::PointerDelivery::Semantic
     ) {
-        request.policy = crate::InteractionPolicy::headless();
+        request.policy.allow_cursor_move = false;
     }
     request = request
         .with_verified_point(preflight.verified_point.clone())
@@ -159,7 +158,11 @@ pub(crate) fn dispatch_resolved_landing(
     );
     let mut result = dispatch_result?;
     if raises_surface {
-        result.surfaces = settled_surfaces(&final_target, expected_process);
+        result = result.with_surfaces_read(final_target.adapter.surfaces_raised_by(
+            expected_process,
+            final_target.handle,
+            final_target.deadline,
+        ));
     }
     final_target
         .context
@@ -171,28 +174,12 @@ pub(crate) fn dispatch_resolved_landing(
     Ok((result, handle))
 }
 
-/// An action that opens a sheet, menu, or alert leaves the caller staring at a
-/// success envelope with no hint that the application is now waiting on a
-/// dialog. Reporting the overlays saves a round of window archaeology. Purely
-/// informational, so a failed read never disturbs delivered work.
-fn settled_surfaces(
-    target: &ResolvedRefAction<'_>,
-    process: crate::ProcessIdentity,
-) -> Vec<crate::SurfaceInfo> {
-    target
-        .adapter
-        .list_surfaces(process, target.deadline)
-        .unwrap_or_default()
-}
-
 pub(crate) fn mark_pre_dispatch_resolution_failure(error: AdapterError) -> AdapterError {
     match error.disposition {
         crate::DeliverySemantics::Unknown | crate::DeliverySemantics::NotDelivered => {
             error.with_disposition(crate::DeliverySemantics::not_delivered())
         }
-        crate::DeliverySemantics::DeliveryUncertain
-        | crate::DeliverySemantics::DeliveredUnverified
-        | crate::DeliverySemantics::DeliveredVerified => error,
+        _ => error,
     }
 }
 
@@ -318,7 +305,7 @@ pub(crate) fn execute_resolved(
     let stability =
         actionability::StabilityExpectation::permissive(target.entry.geometry.bounds_hash);
     preflight_resolved(&target, &request, stability)?;
-    let result = ref_action_single::dispatch_resolved(target.target, request, lease);
+    let result = dispatch_resolved_landing(target.target, request, lease).map(|(result, _)| result);
     finish_artifacts(target.target, &pre);
     result
 }
@@ -373,7 +360,6 @@ pub fn execute_entry_with_context(
             context,
         },
         request,
-        ref_action_single::dispatch_resolved,
     )
 }
 

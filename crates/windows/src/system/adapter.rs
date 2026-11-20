@@ -3,12 +3,13 @@ use agent_desktop_core::{
     DismissNotificationRequest, DisplayInfo, ImageBuffer, InteractionLease, InteractionPolicy,
     KeyCombo, NotificationActionRequest, NotificationFilter, NotificationInfo, ObservationOps,
     OperationReport, PermissionReport, ProcessIdentity, ScreenshotTarget, SessionAffinity,
-    SignalBaseline, SignalFilter, SnapshotSurface, SystemOps, WindowFilter, WindowInfo, WindowOp,
-    system::launch_options::LaunchOptions, system::process_state::ProcessState,
+    SignalBaseline, SignalFilter, SnapshotSurface, SurfaceOpening, SystemOps, WindowFilter,
+    WindowInfo, WindowOp, system::launch_options::LaunchOptions,
+    system::process_state::ProcessState,
 };
 
 use crate::adapter::WindowsAdapter;
-use crate::system::close_outcome::CloseOutcome;
+use crate::system::{close_outcome::CloseOutcome, escape_popup};
 
 #[cfg(target_os = "windows")]
 #[path = "tcp_listener.rs"]
@@ -103,7 +104,7 @@ impl SystemOps for WindowsAdapter {
     }
 
     /// The surfaces this adapter can observe: a named window, the focused
-    /// window, a Chromium modal-as-sheet, an open application menu, and the
+    /// window, a Chromium modal-as-sheet, an open menu or popover, and the
     /// shell kinds the shell-surface resolver reaches on this build. Core
     /// validates the requested surface against this list before the adapter
     /// is ever called (the mirror of macOS `supported_surfaces`), so a kind
@@ -111,14 +112,14 @@ impl SystemOps for WindowsAdapter {
     /// without an arm would convert the old emit/advertise asymmetry into an
     /// advertise/resolve one. `quick-settings` is deliberately absent: this
     /// build carries the quick actions inside the Action Center, so the kind
-    /// refuses in core with the standard shape instead of pretending it can
-    /// root.
+    /// refuses in core with the standard shape instead of pretending it can root.
     fn supported_surfaces(&self) -> Vec<SnapshotSurface> {
         vec![
             SnapshotSurface::Window,
             SnapshotSurface::Focused,
             SnapshotSurface::Sheet,
             SnapshotSurface::Menu,
+            SnapshotSurface::Popover,
             SnapshotSurface::StartMenu,
             SnapshotSurface::Taskbar,
             SnapshotSurface::SystemTray,
@@ -140,14 +141,12 @@ impl SystemOps for WindowsAdapter {
         surface: SnapshotSurface,
         policy: InteractionPolicy,
         lease: &InteractionLease,
-    ) -> Result<WindowInfo, AdapterError> {
+    ) -> Result<SurfaceOpening, AdapterError> {
         crate::system::shell::shell_surface_open::open_surface(surface, policy, lease.deadline())
     }
 
-    /// The focused window is the focused-only filter's first result, composed
-    /// from `list_windows` rather than a second native path (mirroring
-    /// `focused_window` in `crates/macos/src/system/adapter.rs`). Whatever HWND-shape a
-    /// host presents, it maps to the same identity `list_windows` reports.
+    /// The focused-only filter's first result over `list_windows`, as on macOS,
+    /// so any HWND shape maps to the identity `list_windows` reports.
     fn focused_window(&self, deadline: Deadline) -> Result<Option<WindowInfo>, AdapterError> {
         let filter = WindowFilter {
             focused_only: true,
@@ -179,9 +178,9 @@ impl SystemOps for WindowsAdapter {
         &self,
         id: &str,
         options: &LaunchOptions,
-        lease: &InteractionLease,
+        lease: InteractionLease,
     ) -> Result<agent_desktop_core::system::launch_result::LaunchResult, AdapterError> {
-        crate::system::launch::launch_app_impl(id, options, lease.deadline())
+        crate::system::launch::launch_app_impl(id, options, lease)
     }
 
     fn process_owns_tcp_listener(
@@ -194,15 +193,30 @@ impl SystemOps for WindowsAdapter {
     }
 
     /// Verified termination: `Ok(())` only after the process is observed gone
-    /// (A21-3). Graceful posts `WM_CLOSE`; force calls `TerminateProcess`.
+    /// (A21-3). Graceful posts `WM_CLOSE`; force calls `TerminateProcess`. A
+    /// headless close gives the foreground back to the window that had it
+    /// when a window of the closing application took it, as a save prompt can.
+    /// The foreground is left alone when the closing application had it
+    /// already, and when its process is no longer the one that was closed.
     fn close_app(
         &self,
         app: &AppInfo,
         force: bool,
         lease: &InteractionLease,
+        policy: agent_desktop_core::InteractionPolicy,
     ) -> Result<OperationReport, AdapterError> {
+        let prior = (!policy.allow_focus_steal)
+            .then(crate::system::launch_focus::read_foreground)
+            .flatten()
+            .filter(|prior| prior.pid != app.pid.get());
         let dispatched = crate::system::close::close_app_impl(app, force, lease.deadline())
             .map(|outcome| outcome == CloseOutcome::Exited);
+        let still_running = app.process_instance.as_deref().is_some_and(|instance| {
+            crate::system::process_identity::matches_instance(app.pid, instance).unwrap_or(false)
+        });
+        if let Some(prior) = prior.filter(|_| still_running) {
+            crate::system::launch_focus::return_if_taken(prior, app.pid, lease);
+        }
         OperationReport::from_close_dispatch(app, dispatched)
     }
 
@@ -254,9 +268,8 @@ impl SystemOps for WindowsAdapter {
         crate::system::capture::screenshot::capture_window(window, deadline)
     }
 
-    /// Verify-only composition over the keyboard primitive. Core's headed
-    /// path already activated; this never raises (A9-3: SendInput has no
-    /// per-pid targeting).
+    /// Verify-only key delivery; core's headed path already activated and this
+    /// never raises (A9-3: SendInput has no per-pid targeting).
     fn press_key_for_app(
         &self,
         process: ProcessIdentity,
@@ -265,6 +278,16 @@ impl SystemOps for WindowsAdapter {
         lease: &InteractionLease,
     ) -> Result<ActionResult, AdapterError> {
         crate::system::key_dispatch::press_for_app_impl(process, combo, policy, lease.deadline())
+    }
+
+    fn close_transient_surface(
+        &self,
+        process: &ProcessIdentity,
+        window: Option<&WindowInfo>,
+        policy: InteractionPolicy,
+        lease: &InteractionLease,
+    ) -> Result<Option<ActionResult>, AdapterError> {
+        escape_popup::close_transient_surface(process, window, policy, lease.deadline())
     }
 
     /// The core default blocks nothing; Windows ships its own dangerous-combo
@@ -349,7 +372,7 @@ impl SystemOps for WindowsAdapter {
         &self,
         request: DismissAllNotificationsRequest<'_>,
         _lease: &InteractionLease,
-    ) -> Result<(Vec<NotificationInfo>, Vec<String>), AdapterError> {
+    ) -> Result<(Vec<NotificationInfo>, Vec<AdapterError>), AdapterError> {
         crate::notifications::actions::dismiss_all(
             request.app_filter,
             request.policy,

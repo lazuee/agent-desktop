@@ -67,70 +67,17 @@ pub trait ObservationOps: Send + Sync {
         Err(AdapterError::not_supported("list_windows"))
     }
 
-    fn list_apps(&self, _deadline: Deadline) -> Result<Vec<AppInfo>, AdapterError> {
-        Err(AdapterError::not_supported("list_apps"))
-    }
-
-    fn list_apps_inventory(&self, deadline: Deadline) -> Result<crate::AppInventory, AdapterError> {
-        Ok(crate::AppInventory {
-            apps: self.list_apps(deadline)?,
-            skipped: Vec::new(),
-        })
-    }
-
-    fn list_apps_scoped(
-        &self,
-        name: &str,
-        bundle_id: Option<&str>,
-        deadline: Deadline,
-    ) -> Result<Vec<AppInfo>, AdapterError> {
-        Ok(self
-            .list_apps(deadline)?
-            .into_iter()
-            .filter(|app| {
-                app.matches_identifier(name)
-                    && bundle_id.is_none_or(|expected| {
-                        app.bundle_id
-                            .as_deref()
-                            .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
-                    })
-            })
-            .collect())
-    }
-
-    /// Allows filtering before presentation enrichment. Skipped records describe
-    /// incomplete evidence within the query; exact lookups cannot authorize
-    /// mutation until that inventory is complete.
+    /// The running applications `query` admits, the one listing of
+    /// applications. An adapter may read only what the query can admit before
+    /// it enriches a record. Skipped records describe incomplete evidence
+    /// within the query; exact lookups cannot authorize mutation until that
+    /// inventory is complete.
     fn query_app_inventory(
         &self,
-        query: crate::AppInventoryQuery<'_>,
-        deadline: Deadline,
+        _query: crate::AppInventoryQuery<'_>,
+        _deadline: Deadline,
     ) -> Result<crate::AppInventory, AdapterError> {
-        let name = match query {
-            crate::AppInventoryQuery::All => return self.list_apps_inventory(deadline),
-            crate::AppInventoryQuery::Exact { name, bundle_id } => {
-                return Ok(crate::AppInventory {
-                    apps: self.list_apps_scoped(name, bundle_id, deadline)?,
-                    skipped: Vec::new(),
-                });
-            }
-            crate::AppInventoryQuery::NameOrAlias(name) => name,
-        };
-        let mut inventory = self.list_apps_inventory(deadline)?;
-        inventory
-            .apps
-            .retain(|app| query.matches_display_name(&app.name));
-        let aliased = match self.list_apps_scoped(name, None, deadline) {
-            Ok(apps) => apps,
-            Err(err) if err.code == ErrorCode::PlatformNotSupported => Vec::new(),
-            Err(err) => return Err(err),
-        };
-        for app in aliased {
-            if !inventory.apps.iter().any(|kept| kept.pid == app.pid) {
-                inventory.apps.push(app);
-            }
-        }
-        Ok(inventory)
+        Err(AdapterError::not_supported("query_app_inventory"))
     }
 
     fn get_tree(
@@ -168,9 +115,14 @@ pub trait ObservationOps: Send + Sync {
         Ok(())
     }
 
+    /// Lands the element an anchor's path names. With a `base`, the path is
+    /// relative to that live element and the descent starts there, so the landed
+    /// element is a descendant of the one the caller verified. An adapter that
+    /// cannot start from a base must refuse, never land from the window root.
     fn resolve_locator_anchor(
         &self,
         _entry: &RefEntry,
+        _base: Option<&NativeHandle>,
         _deadline: Deadline,
     ) -> Result<NativeHandle, AdapterError> {
         Err(AdapterError::not_supported("resolve_locator_anchor"))
@@ -182,6 +134,19 @@ pub trait ObservationOps: Send + Sync {
         _deadline: Deadline,
     ) -> Result<Vec<SurfaceInfo>, AdapterError> {
         Err(AdapterError::not_supported("list_surfaces"))
+    }
+
+    /// The surfaces open after an action on `raised_by`. The default is the
+    /// application's inventory. An adapter whose platform hangs a surface
+    /// below the control that raised it adds that surface, which the
+    /// inventory of windows and menus does not reach.
+    fn surfaces_raised_by(
+        &self,
+        process: crate::ProcessIdentity,
+        _raised_by: &NativeHandle,
+        deadline: Deadline,
+    ) -> Result<Vec<SurfaceInfo>, AdapterError> {
+        self.list_surfaces(process, deadline)
     }
 
     /// Reads an already-open OS-chrome surface - the Start menu, the taskbar,
@@ -238,6 +203,18 @@ pub trait ObservationOps: Send + Sync {
         _deadline: Deadline,
     ) -> Result<LiveElement, AdapterError> {
         Err(AdapterError::not_supported("get_live_element"))
+    }
+
+    /// Reads the effect witness of `handle`: its own state, the application's
+    /// focused element and its window, as an action can change them. Read
+    /// before and after a click or a select; a field the platform cannot read
+    /// is `None`.
+    fn read_effect_witness(
+        &self,
+        _handle: &NativeHandle,
+        _deadline: Deadline,
+    ) -> Result<crate::EffectWitness, AdapterError> {
+        Err(AdapterError::not_supported("read_effect_witness"))
     }
 
     fn get_element_bounds(
