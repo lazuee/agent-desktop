@@ -1,4 +1,4 @@
-use super::{environment_has_marker, process_start_time};
+use super::{blob_names_agent_desktop, environment_has_marker, process_start_time};
 
 const MARKER: &str = "AGENT_DESKTOP_INTERNAL_COMMAND_HOST=1";
 
@@ -67,4 +67,46 @@ fn process_start_time_requires_the_process_owner() {
     if uid != 0 {
         assert!(process_start_time(1, uid).is_none());
     }
+}
+
+fn identity_blob(identifier: &str, trailing: &[u8]) -> Vec<u8> {
+    let mut blob = (identifier.len() as u64 + 1).to_be_bytes().to_vec();
+    blob.extend_from_slice(identifier.as_bytes());
+    blob.push(0);
+    blob.extend_from_slice(trailing);
+    blob
+}
+
+#[test]
+fn only_an_agent_desktop_identity_names_agent_desktop() {
+    assert!(blob_names_agent_desktop(&identity_blob(
+        "agent_desktop",
+        &[]
+    )));
+    assert!(blob_names_agent_desktop(&identity_blob(
+        "agent_desktop-ffi",
+        &[]
+    )));
+    for other in ["agent-desktop", "agent_desktopz", "com.apple.Terminal", ""] {
+        assert!(
+            !blob_names_agent_desktop(&identity_blob(other, &[])),
+            "{other}"
+        );
+    }
+}
+
+#[test]
+fn an_identity_blob_without_a_terminator_fails_closed() {
+    let mut blob = identity_blob("agent_desktop", &[]);
+    blob.pop();
+    assert!(!blob_names_agent_desktop(&blob));
+    assert!(!blob_names_agent_desktop(&(8u64).to_be_bytes()));
+}
+
+#[test]
+fn the_padding_after_the_identifier_is_not_read_as_the_name() {
+    assert!(blob_names_agent_desktop(&identity_blob(
+        "agent_desktop",
+        &[0; 400]
+    )));
 }

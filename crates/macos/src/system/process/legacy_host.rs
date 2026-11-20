@@ -80,7 +80,7 @@ fn blob_names_agent_desktop(blob: &[u8]) -> bool {
         return false;
     };
     let identifier = &identifier[..end];
-    identifier == b"agent-desktop" || identifier.starts_with(b"agent_desktop-")
+    identifier == b"agent_desktop" || identifier.starts_with(b"agent_desktop-")
 }
 
 fn is_agent_desktop(pid: libc::pid_t) -> bool {
@@ -117,3 +117,27 @@ fn has_marker(pid: libc::pid_t, buffer: &mut [u8]) -> bool {
 #[cfg(test)]
 #[path = "legacy_host_tests.rs"]
 mod tests;
+
+#[doc(hidden)]
+#[allow(dead_code)]
+pub fn debug_probe(pid: libc::pid_t) -> String {
+    let mut buffer = match argument_buffer() {
+        Some(b) => b,
+        None => return "no buffer".into(),
+    };
+    let mut out = String::new();
+    out.push_str(&format!("marker={} ", has_marker(pid, &mut buffer)));
+    out.push_str(&format!("identity={} ", is_agent_desktop(pid)));
+    let uid = unsafe { libc::geteuid() };
+    out.push_str(&format!(
+        "starttime={:?} ",
+        process_start_time(pid, uid).is_some()
+    ));
+    out.push_str(&format!(
+        "inlist={}",
+        list_pids(PROC_UID_ONLY, uid)
+            .unwrap_or_default()
+            .contains(&pid)
+    ));
+    out
+}
