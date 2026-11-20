@@ -87,6 +87,7 @@ impl ObservationOps for FocusAdapter {
         })
     }
 
+    #[allow(deprecated)]
     fn get_element_bounds(
         &self,
         _: &NativeHandle,

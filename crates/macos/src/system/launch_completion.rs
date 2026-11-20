@@ -187,6 +187,9 @@ fn callback_error(
     }
 }
 
+/// The atomic `try_update` is still unstable on the declared MSRV, so the deprecated
+/// `fetch_update` stays until it stabilises.
+#[allow(deprecated)]
 fn reserve_launch() -> Result<(), AdapterError> {
     OUTSTANDING_LAUNCHES
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
@@ -208,6 +211,7 @@ fn reserve_launch() -> Result<(), AdapterError> {
         })
 }
 
+#[allow(deprecated)]
 fn release_launch() {
     let _ = OUTSTANDING_LAUNCHES.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
         current.checked_sub(1)

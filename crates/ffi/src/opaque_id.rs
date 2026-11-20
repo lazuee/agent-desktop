@@ -2,6 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agent_desktop_core::{AdapterError, ErrorCode};
 
+/// The atomic `try_update` is still unstable on the declared MSRV, so the deprecated
+/// `fetch_update` stays until it stabilises.
+#[allow(deprecated)]
 pub(crate) fn allocate(
     counter: &AtomicUsize,
     resource: &'static str,
