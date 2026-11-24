@@ -8,7 +8,6 @@ use crate::{
     wait::deadline::POLL_INTERVAL,
 };
 use serde_json::{Value, json};
-use std::time::Instant;
 
 pub(crate) struct ElementWaitInput {
     pub(crate) ref_id: String,
@@ -26,8 +25,7 @@ pub(crate) fn wait_for_element(
         predicate,
         timeout_ms,
     } = input;
-    let start = Instant::now();
-    let deadline = crate::Deadline::at(start, timeout_ms)?;
+    let deadline = crate::Deadline::after(timeout_ms)?;
     let entry = load_ref_entry(&ref_id, context)?;
 
     let mut last_observed = json!(null);
@@ -65,7 +63,7 @@ pub(crate) fn wait_for_element(
                             expected_bounds_hash = Some(observed);
                         }
                         if wait_predicate::satisfied(&predicate, &last_observed) {
-                            let elapsed = start.elapsed().as_millis();
+                            let elapsed = deadline.elapsed().as_millis();
                             return Ok(json!({
                                 "found": true,
                                 "ref": ref_id,
@@ -85,7 +83,7 @@ pub(crate) fn wait_for_element(
                     Err(err) => return Err(AppError::Adapter(err)),
                 }
             }
-            ResolveAttemptOutcome::Failed(err) if err.is_explicitly_retryable() => {
+            ResolveAttemptOutcome::Failed(err) if is_retryable_wait_error(&err) => {
                 last_observed = json!({
                     "error": err.code.as_str(),
                     "message": err.message
@@ -97,7 +95,11 @@ pub(crate) fn wait_for_element(
         if deadline.is_expired() {
             return wait_timeout::element(ref_id, predicate, timeout_ms, last_observed);
         }
-        deadline.pause(POLL_INTERVAL);
+        let remaining = deadline.remaining();
+        if remaining.is_zero() {
+            return wait_timeout::element(ref_id, predicate, timeout_ms, last_observed);
+        }
+        crate::wait::deadline::sleep(remaining.min(POLL_INTERVAL));
     }
 }
 
@@ -107,4 +109,8 @@ fn is_retryable_observe_error(error: &crate::AdapterError) -> bool {
             error.code,
             crate::ErrorCode::Timeout | crate::ErrorCode::ElementNotFound
         )
+}
+
+fn is_retryable_wait_error(error: &crate::AdapterError) -> bool {
+    error.is_explicitly_retryable()
 }
