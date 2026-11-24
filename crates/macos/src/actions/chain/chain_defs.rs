@@ -55,6 +55,9 @@ pub(crate) fn click_rungs<'a>(
     ]
 }
 
+/// A right click on a surface with no native menu: the pointer click carries the
+/// menu search when the interaction policy allows the pointer, and the semantic
+/// rung is what a headless policy has left.
 pub(crate) fn right_click_rungs<'a>(
     element: &'a AXElement,
     ctx: &ChainContext<'a>,

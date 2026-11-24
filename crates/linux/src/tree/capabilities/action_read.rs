@@ -12,7 +12,7 @@ use crate::tree::properties::node_read::call;
 use crate::tree::properties::read_purpose::ReadPurpose;
 use crate::tree::vocabulary::role_numbers::PASSWORD_TEXT;
 use crate::tree::vocabulary::state_bits::{CHECKED, EXPANDED, PRESSED, SELECTED, StateBits};
-use crate::tree::{AtspiElement, Field};
+use crate::tree::{AtspiElement, Field, LabelOutcome};
 
 /// One node read for an action, shared by a write and its read-back.
 #[derive(Debug, Clone)]
@@ -78,10 +78,22 @@ impl NodeView {
             .map(String::as_str)
     }
 
-    /// The node's name as read: `None` when the read failed, `Some(None)` when
-    /// the node has no name.
-    pub(crate) fn name_read(&self) -> Option<Option<String>> {
-        text_of(&self.node.read.node.properties.name)
+    /// The node's name with the `LabelledBy` text applied, in the precedence
+    /// `name_evidence` resolves: a non-blank `Name` wins, a blank one falls
+    /// back to the label, and an unread `Name` or label is `None`.
+    pub(crate) fn resolved_name(&self) -> Option<Option<String>> {
+        let name = &self.node.read.node.properties.name;
+        if let Some(text) = name.non_blank() {
+            return Some(Some(text.clone()));
+        }
+        if name.is_failed() {
+            return None;
+        }
+        match &self.node.read.label {
+            LabelOutcome::Text(text) if !text.trim().is_empty() => Some(Some(text.clone())),
+            LabelOutcome::Text(_) | LabelOutcome::Unlabelled => Some(None),
+            LabelOutcome::Failed => None,
+        }
     }
 
     /// The node's value, withheld from a secure field whatever was read and

@@ -49,6 +49,7 @@ fn return_and_escape_map_to_default_and_cancel_actions() {
         simple_key_action(&key("escape", Vec::new())),
         Some("AXCancel")
     );
+    assert_eq!(simple_key_action(&key("esc", Vec::new())), Some("AXCancel"));
     assert_eq!(
         simple_key_action(&key("return", vec![Modifier::Meta])),
         None
@@ -83,6 +84,16 @@ fn a_missing_focused_element_names_both_recovery_routes() {
         .expect("the error carries a recovery suggestion");
     assert!(suggestion.contains("--headed"), "{suggestion}");
     assert!(suggestion.contains("--surface menubar"), "{suggestion}");
+}
+
+#[test]
+fn a_missing_focused_element_is_a_refusal_core_can_route_to_a_surface_close() {
+    let error = super::no_focused_element_error(agent_desktop_core::InteractionPolicy::headless());
+
+    assert_eq!(error.disposition, DeliverySemantics::not_delivered());
+    let details = error.details.expect("refusal details");
+    assert_eq!(details["check"], "process_focus");
+    assert_eq!(details["physical_delivery_started"], false);
 }
 
 #[test]

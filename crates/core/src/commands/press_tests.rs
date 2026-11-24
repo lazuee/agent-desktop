@@ -179,6 +179,43 @@ fn adapter_blocked_combo_is_refused_when_not_forced() {
     );
 }
 
+/// Headed mode does not lift a safety block, so a refusal that names it sends
+/// the caller into a retry that fails the same way. Every part of the envelope
+/// the caller reads must point at `--force` instead.
+#[test]
+fn blocked_combo_refusal_points_at_force_and_never_at_headed_mode() {
+    let error = execute(
+        args("alt+f4", false),
+        &BlockingAdapter,
+        &CommandContext::default(),
+    )
+    .unwrap_err();
+    let payload = crate::response::output::ErrorPayload::from_app_error(&error);
+    let suggestion = payload
+        .suggestion
+        .as_deref()
+        .expect("a blocked combo must say how to override it");
+    assert!(suggestion.contains("--force"), "got: {suggestion}");
+    assert!(!suggestion.contains("--headed"), "got: {suggestion}");
+
+    let recovery = payload
+        .recovery
+        .as_ref()
+        .expect("a refused press sent nothing, so a retry is safe");
+    assert!(
+        !recovery.strategy.contains("headed"),
+        "the recovery strategy must not route through headed mode: {recovery:?}"
+    );
+
+    let envelope = serde_json::to_string(&crate::response::output::Response::err("press", payload))
+        .expect("the envelope serializes");
+    assert!(envelope.contains("--force"), "got: {envelope}");
+    assert!(
+        !envelope.contains("--headed"),
+        "headed mode leaves the combo blocked, so no envelope field may recommend it: {envelope}"
+    );
+}
+
 #[test]
 fn force_bypasses_the_adapter_block() {
     execute(

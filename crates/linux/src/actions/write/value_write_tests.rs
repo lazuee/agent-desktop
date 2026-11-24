@@ -83,3 +83,21 @@ fn text_for_a_cell_is_refused_before_anything_is_sent() {
     assert!(error.message.contains("takes a number"));
     assert!(error.message.contains("no background route"));
 }
+
+#[test]
+fn text_for_a_cell_that_also_has_editable_text_takes_the_text_route() {
+    let both = names(&["Text", "Value", "EditableText"]);
+    assert_eq!(
+        set_value_route(Some(TABLE_CELL), Some(&both), "abc"),
+        Route::Text
+    );
+    assert_eq!(
+        set_value_route(Some(TABLE_CELL), Some(&both), "42"),
+        Route::Cell
+    );
+    let value_only = names(&["Text", "Value"]);
+    assert_eq!(
+        set_value_route(Some(TABLE_CELL), Some(&value_only), "abc"),
+        Route::Cell
+    );
+}

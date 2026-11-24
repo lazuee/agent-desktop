@@ -143,10 +143,11 @@ async fn read_number(
     })
 }
 
-/// The content of a table cell in one call: `GetText` from the start to the
-/// end of the text. A cell holds a short value, so the length is not asked
-/// for first; the field budget still cuts what is kept. A blank cell holds no
-/// content, so it has no value, in a snapshot and in a read alike.
+/// The content of a table cell in one call: `GetText` from the start to
+/// `MAX_TEXT_CHARACTERS`, which the toolkits clamp to the end of the text
+/// (L42-8), so a long cell never crosses the bus whole and the length is not
+/// asked for first. The field budget still cuts what is kept. A blank cell
+/// holds no content, so it has no value, in a snapshot and in a read alike.
 async fn read_cell_text(
     connection: &Connection,
     element: &AtspiElement,
@@ -157,7 +158,7 @@ async fn read_cell_text(
         element,
         TEXT_INTERFACE,
         "GetText",
-        &(0i32, -1i32),
+        &(0i32, MAX_TEXT_CHARACTERS),
     )
     .await?
     .body()
@@ -165,11 +166,19 @@ async fn read_cell_text(
     if text.is_empty() {
         return Ok(ValueRead::absent());
     }
+    let at_cap = reaches_text_cap(&text);
     let (kept, cut) = truncate_to_boundary(text, max_bytes);
     Ok(ValueRead {
         value: Field::Present(kept),
-        truncated: cut,
+        truncated: cut || at_cap,
     })
+}
+
+/// Whether a capped `GetText` returned as many characters as it asked for,
+/// so the text may go on past the cap.
+fn reaches_text_cap(text: &str) -> bool {
+    usize::try_from(MAX_TEXT_CHARACTERS)
+        .is_ok_and(|cap| cap > 0 && text.chars().nth(cap - 1).is_some())
 }
 
 async fn read_text(

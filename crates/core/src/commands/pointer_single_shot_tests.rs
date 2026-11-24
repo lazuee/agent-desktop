@@ -163,8 +163,8 @@ impl SystemOps for SingleShotScrollAdapter {
         &self,
         _window: &crate::WindowInfo,
         _lease: &InteractionLease,
-    ) -> Result<(), AdapterError> {
-        Ok(())
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
+        Ok(crate::DeliverySemantics::delivered_unverified())
     }
 }
 
@@ -204,7 +204,7 @@ fn ref_entry(pid: u32) -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }

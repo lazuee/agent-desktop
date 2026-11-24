@@ -28,8 +28,8 @@ fn a_created_process_with_a_read_back_token_reports_delivered_verified() {
 
 #[test]
 fn zero_wait_never_polls_after_first_observation() {
-    assert!(!should_poll_after_first_observation(0));
-    assert!(should_poll_after_first_observation(1));
+    assert!(!launch_observe::should_poll_after_first_observation(0));
+    assert!(launch_observe::should_poll_after_first_observation(1));
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn observe_window_once_tolerates_an_expired_deadline_as_no_window_observed() {
     let pid = ProcessId::from(std::process::id());
     let expired = Deadline::after(0).expect("a zero-timeout deadline is constructible");
 
-    let observed = observe_window_once(pid, "irrelevant-instance", expired)
+    let observed = launch_observe::observe_window_once(pid, "irrelevant-instance", expired)
         .expect("a Timeout from the inventory must be tolerated, not propagated");
 
     assert!(

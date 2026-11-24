@@ -124,8 +124,8 @@ macro_rules! exact_window_focus {
             &self,
             _window: &$crate::WindowInfo,
             _lease: &$crate::InteractionLease,
-        ) -> Result<(), $crate::AdapterError> {
-            Ok(())
+        ) -> Result<$crate::DeliverySemantics, $crate::AdapterError> {
+            Ok($crate::DeliverySemantics::delivered_unverified())
         }
     };
 }
@@ -172,7 +172,7 @@ pub(crate) fn minimal_ref_entry(role: &str, name: Option<&str>) -> crate::RefEnt
             root_ref: None,
             path_is_absolute: false,
             path: crate::refs::RefPath::default(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }

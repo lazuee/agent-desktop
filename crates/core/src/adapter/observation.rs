@@ -32,8 +32,38 @@ pub trait ObservationOps: Send + Sync {
         false
     }
 
+    /// The window a surface is presented by, when the platform shows it in a
+    /// window of its own that the window inventory leaves out. A capture that
+    /// returns one records that window on every ref it allocates, so a later
+    /// resolve or observation lands on the window that was read rather than on
+    /// another one of the same kind. `None` keeps the surface
+    /// application-owned, which is the answer for a surface with no window.
+    fn surface_window(
+        &self,
+        _app: &AppInfo,
+        _surface: SnapshotSurface,
+        _deadline: Deadline,
+    ) -> Result<Option<WindowInfo>, AdapterError> {
+        Ok(None)
+    }
+
     fn focused_app(&self, _deadline: Deadline) -> Result<Option<AppInfo>, AdapterError> {
         Err(AdapterError::not_supported("focused_app"))
+    }
+
+    /// The window a caller named for a surface the platform presents in a
+    /// window of its own: the id a stored ref recorded, or the `--window-id`
+    /// of a capture. The id must still name an open surface window of that
+    /// exact process instance, or this refuses; `None` keeps the window
+    /// inventory lookup, which is the answer for a surface with no window.
+    fn recorded_surface_window(
+        &self,
+        _process: crate::ProcessIdentity,
+        _window_id: &str,
+        _surface: SnapshotSurface,
+        _deadline: Deadline,
+    ) -> Result<Option<WindowInfo>, AdapterError> {
+        Ok(None)
     }
 
     /// Reports protocol targets that have no screen position without requiring a native read.

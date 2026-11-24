@@ -64,7 +64,7 @@ fn a_native_menu_click_is_the_single_semantic_press() {
 }
 
 #[test]
-fn a_right_click_pairs_the_physical_click_with_one_semantic_menu_rung() {
+fn a_right_click_searches_for_the_menu_from_the_pointer_rung_with_a_semantic_fallback() {
     let element = AXElement(std::ptr::null_mut());
     let ctx = context();
 

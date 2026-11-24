@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::{
-    ElementIdentifier, IdentityMatch, RefEntry, RefEntryIdentity,
+    ElementIdentifier, IdentityMatch, RefEntry, RefEntryIdentity, ScopeChain,
     locator::LocatorQuery,
     locator::live_locator::{
         LocatorEvidence, LocatorField, ObservationSource, ObservedTree, materialize_ref_entry,
@@ -11,6 +11,7 @@ use crate::{
     refs::ref_identity::stable_name,
     refs::ref_live_predicate::LivePredicate,
     refs::ref_scope_resolve::members,
+    refs::scope_chain::{MAX_SCOPE_CHAIN_DEPTH, ScopeInterner},
     tree::accname::non_blank,
 };
 
@@ -33,7 +34,7 @@ pub(crate) struct CaptureProof<'a> {
     unread: Vec<(u8, LivePredicate<'a>)>,
     whole_window: bool,
     parents: OnceLock<Vec<Option<usize>>>,
-    scoped: Mutex<HashMap<usize, Option<Vec<RefEntryIdentity>>>>,
+    scoped: Mutex<ScopeInterner>,
     scope_buckets: Mutex<HashMap<(usize, u8), Arc<Bucket<'a>>>>,
 }
 
@@ -49,7 +50,7 @@ impl<'a> CaptureProof<'a> {
             start: observed.roots.first().map(|root| *root as usize),
             buckets: std::array::from_fn(|_| OnceLock::new()),
             parents: OnceLock::new(),
-            scoped: Mutex::new(HashMap::new()),
+            scoped: Mutex::new(ScopeInterner::default()),
             scope_buckets: Mutex::new(HashMap::new()),
             unread: observed
                 .nodes
@@ -102,11 +103,7 @@ impl<'a> CaptureProof<'a> {
         Some(index)
     }
 
-    fn chain_of(
-        &self,
-        predicate: &FullPredicate<'_>,
-        index: usize,
-    ) -> Option<Vec<RefEntryIdentity>> {
+    fn chain_of(&self, predicate: &FullPredicate<'_>, index: usize) -> Option<ScopeChain> {
         if !self.whole_window {
             return None;
         }
@@ -116,43 +113,77 @@ impl<'a> CaptureProof<'a> {
                 if !self.proves_in(Some(scope), predicate, index) {
                     return None;
                 }
-                let mut chain = vec![self.identity_of(scope)?];
-                chain.extend(outer);
-                return Some(chain);
+                return self.chain_for_scope(scope, &outer);
             }
             ancestor = self.parent_of(scope);
         }
         None
     }
 
-    fn identified(&self, index: usize) -> Option<Vec<RefEntryIdentity>> {
-        if let Some(known) = self.scoped.lock().ok()?.get(&index) {
+    fn chain_for_scope(&self, scope: usize, outer: &ScopeChain) -> Option<ScopeChain> {
+        if let Some(known) = self.scoped.lock().ok()?.scope_chains.get(&scope) {
+            return known.clone();
+        }
+        let next_len = outer.len().saturating_add(1);
+        if next_len > MAX_SCOPE_CHAIN_DEPTH {
+            let _ = self
+                .scoped
+                .lock()
+                .map(|mut state| state.scope_chains.insert(scope, None));
+            return None;
+        }
+        let head = self.identity_of(scope)?;
+        let mut items = Vec::with_capacity(next_len);
+        items.push(head);
+        items.extend(outer.iter().cloned());
+        self.scoped.lock().ok()?.intern_scope_chain(scope, items)
+    }
+
+    fn identified(&self, index: usize) -> Option<ScopeChain> {
+        if let Some(known) = self.scoped.lock().ok()?.identified.get(&index) {
             return known.clone();
         }
         let identity = self.identity_of(index)?;
         let predicate = FullPredicate::of_identity(&identity);
         let chain = if self.proves_in(None, &predicate, index) {
-            Some(Vec::new())
+            Some(ScopeChain::default())
         } else {
             self.chain_of(&predicate, index)
         };
-        self.scoped.lock().ok()?.insert(index, chain.clone());
+        self.scoped
+            .lock()
+            .ok()?
+            .identified
+            .insert(index, chain.clone());
         chain
     }
 
     /// What a chain records of one ancestor: the identity its own ref would
-    /// publish, with the name reduced to the stable one a resolution compares.
-    fn identity_of(&self, index: usize) -> Option<RefEntryIdentity> {
+    /// publish, with the name reduced to the stable one a resolution compares,
+    /// interned once per node within the aggregate scope memory budget.
+    fn identity_of(&self, index: usize) -> Option<Arc<RefEntryIdentity>> {
+        if let Some(known) = self.scoped.lock().ok()?.identities.get(&index) {
+            return known.clone();
+        }
         let node = &self.observed.nodes[index];
         let role = non_blank(node.evidence.role.known().map(String::as_str))?;
         let own =
             materialize_ref_entry(node, &self.observed.source, &LocatorQuery::default()).identity;
-        Some(RefEntryIdentity {
+        let built = RefEntryIdentity {
             name: stable_name(role, own.name.as_deref(), own.value.as_deref()).map(str::to_string),
             retained_object: None,
             value: None,
             ..own
-        })
+        };
+        self.scoped.lock().ok()?.intern_identity(index, built)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scope_memory_bytes(&self) -> usize {
+        self.scoped
+            .lock()
+            .map(|state| state.used_bytes)
+            .unwrap_or(0)
     }
 
     fn parent_of(&self, index: usize) -> Option<usize> {

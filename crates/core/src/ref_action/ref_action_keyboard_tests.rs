@@ -77,7 +77,11 @@ impl SystemOps for KeyboardAdapter {
         Ok(window.clone())
     }
 
-    fn focus_window(&self, _: &WindowInfo, _: &InteractionLease) -> Result<(), AdapterError> {
+    fn focus_window(
+        &self,
+        _: &WindowInfo,
+        _: &InteractionLease,
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
         self.focus_calls.fetch_add(1, Ordering::SeqCst);
         Err(AdapterError::not_supported("focus_window"))
     }

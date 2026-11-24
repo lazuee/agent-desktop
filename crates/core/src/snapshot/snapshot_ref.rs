@@ -149,7 +149,9 @@ fn resolve_result_owner(
     window: &WindowInfo,
     adapter: &dyn PlatformAdapter,
 ) -> Result<SnapshotOwner, AppError> {
-    if adapter.is_application_surface(entry.source.source_surface) {
+    if adapter.is_application_surface(entry.source.source_surface)
+        && entry.source.source_window_id.is_none()
+    {
         let app = super::surface_target::application_from_ref(entry)?;
         crate::system::app_lookup::process_identity(&app)?;
         Ok(SnapshotOwner::Application(app))

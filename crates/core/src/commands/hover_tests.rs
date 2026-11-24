@@ -136,9 +136,9 @@ impl SystemOps for HoverCaptureAdapter {
         &self,
         window: &crate::WindowInfo,
         _lease: &crate::InteractionLease,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
         self.focused_pids.lock().unwrap().push(window.pid);
-        Ok(())
+        Ok(crate::DeliverySemantics::delivered_unverified())
     }
 }
 
@@ -180,7 +180,7 @@ fn ref_snapshot(pid: u32) -> String {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     });
     store.save_new_snapshot(&refmap).unwrap()
@@ -355,8 +355,8 @@ impl SystemOps for StaleThenOkAdapter {
         &self,
         _window: &crate::WindowInfo,
         _lease: &crate::InteractionLease,
-    ) -> Result<(), AdapterError> {
-        Ok(())
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
+        Ok(crate::DeliverySemantics::delivered_unverified())
     }
 }
 

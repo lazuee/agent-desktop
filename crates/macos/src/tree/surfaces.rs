@@ -35,6 +35,18 @@ pub(crate) fn transient_surface_for_pid(
     })
 }
 
+/// The menu or popover inside `window`, read in one bounded pass.
+#[cfg(target_os = "macos")]
+pub(crate) fn transient_surface_in_window(
+    window: &AXElement,
+    deadline: Deadline,
+) -> Result<Option<AXElement>, AdapterError> {
+    Ok(
+        super::app_menu::find_transient_surface(window.clone(), "window".into(), deadline)?
+            .map(|(_, surface)| surface),
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn first_child_with_role_or_subrole(
     pid: i32,
@@ -70,25 +82,24 @@ pub(crate) fn surface_in_window(
     }
 }
 
-/// The first popover in `window`, nearest the window first, through the
-/// bounded search that finds an open menu. None only when every element that
-/// search reads was read: a search cut at its element limit fails as not found
-/// and says it is incomplete.
+/// The first popover in `window`, nearest the window first, through a search
+/// that opens every element below it, so a popover anchored to a control inside
+/// a list or a table row is reached. None only when the search read every
+/// element: one cut at its element limit fails as not found and says it is
+/// incomplete.
 #[cfg(target_os = "macos")]
 pub(super) fn popover_in_window(
     window: &AXElement,
     deadline: Deadline,
 ) -> Result<Option<AXElement>, AdapterError> {
-    super::app_menu::find_surface_descendant_with(
+    let found = super::app_menu::find_surface_descendant_with(
         window.clone(),
         "window".into(),
+        super::app_menu::ChildExpansion::EveryNode,
         deadline,
-        |element, expand| {
+        |element, _| {
             if role_or_subrole_matches(element, "AXPopover", deadline)? {
                 return Ok((true, Vec::new()));
-            }
-            if !expand {
-                return Ok((false, Vec::new()));
             }
             Ok((
                 false,
@@ -96,8 +107,8 @@ pub(super) fn popover_in_window(
             ))
         },
     )
-    .map(|found| found.map(|(_, popover)| popover))
-    .map_err(popover_search_error)
+    .map_err(popover_search_error)?;
+    Ok(found.map(|(_, popover)| popover))
 }
 
 fn popover_search_error(error: AdapterError) -> AdapterError {
@@ -108,9 +119,15 @@ fn popover_search_error(error: AdapterError) -> AdapterError {
     if !cut {
         return error;
     }
+    popover_search_cut()
+}
+
+/// A popover search that did not read every element: it reached its element
+/// limit first, and a popover may sit below that cut.
+fn popover_search_cut() -> AdapterError {
     AdapterError::new(
         ErrorCode::ElementNotFound,
-        "No popover among the elements the search may read; the rest was not searched",
+        "No popover among the elements the search read; the search reached its element limit first",
     )
     .with_details(serde_json::json!({
         "kind": "popover_search_limit",

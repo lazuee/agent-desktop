@@ -23,6 +23,7 @@ struct Stub {
     failures: Vec<&'static str>,
     window: Option<WindowInfo>,
     launched: Option<LaunchResult>,
+    focus_sent: std::sync::atomic::AtomicBool,
 }
 
 impl ObservationOps for Stub {
@@ -128,14 +129,19 @@ impl SystemOps for Stub {
         &self,
         _window: &WindowInfo,
         _lease: &InteractionLease,
-    ) -> Result<(), AdapterError> {
-        Ok(())
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
+        self.focus_sent
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(crate::DeliverySemantics::delivered_unverified())
     }
 
     fn focused_window(
         &self,
         _deadline: crate::Deadline,
     ) -> Result<Option<WindowInfo>, AdapterError> {
+        if !self.focus_sent.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(None);
+        }
         let mut focused = self.window.clone().unwrap();
         focused.state.is_focused = true;
         Ok(Some(focused))

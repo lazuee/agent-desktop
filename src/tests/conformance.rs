@@ -199,7 +199,7 @@ fn entry(bounds: Rect) -> RefEntry {
             root_ref: None,
             path_is_absolute: true,
             path: Default::default(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }

@@ -49,7 +49,8 @@ pub(super) fn prepare(
         return Err(super::ambiguous_apps(&rows));
     }
     if let Some((row, token, _process)) = exact_matches.pop() {
-        let window = super::observe_window(row.pid, &token, options, deadline)?;
+        let window =
+            super::observe_window(row.pid, &token, options, deadline, &super::Progress::new())?;
         return Ok((
             executable,
             Some(super::launch_result(

@@ -19,9 +19,15 @@ impl EffectWitness {
     /// The changes from `before` to `self`. A change counts only when both
     /// reads have the field. A selection or a surface counts only when it
     /// appears, because one that goes away says nothing about this action.
+    /// Focus counts as arriving in the target only when the earlier read saw it
+    /// outside the target; focus that was already inside and moved to another
+    /// child is a move within the window, and an unread earlier focus never
+    /// becomes an arrival.
     pub fn changes_since(&self, before: &Self) -> Vec<WitnessChange> {
         let (now, then) = (self, before);
         let focus_moved = differs(&then.focus.element, &now.focus.element);
+        let focus_arrived =
+            then.focus.inside_target == Some(false) && now.focus.inside_target == Some(true);
         [
             (
                 then.target.selected == Some(false) && now.target.selected == Some(true),
@@ -35,14 +41,9 @@ impl EffectWitness {
                 grew(then.target.surfaces, now.target.surfaces),
                 WitnessChange::SurfaceOpened,
             ),
+            (focus_arrived, WitnessChange::FocusIntoTarget),
             (
-                focus_moved && now.focus.inside_target == Some(true),
-                WitnessChange::FocusIntoTarget,
-            ),
-            (
-                focus_moved
-                    && now.focus.inside_target != Some(true)
-                    && now.focus.in_target_window == Some(true),
+                focus_moved && !focus_arrived && now.focus.in_target_window == Some(true),
                 WitnessChange::FocusMovedInWindow,
             ),
             (

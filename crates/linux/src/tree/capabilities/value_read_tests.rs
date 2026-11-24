@@ -1,4 +1,7 @@
-use super::{ValueSource, number_text, truncate_to_boundary, value_source};
+use super::{
+    MAX_TEXT_CHARACTERS, ValueSource, number_text, reaches_text_cap, truncate_to_boundary,
+    value_source,
+};
 use crate::tree::test_support::helpers::words;
 use crate::tree::vocabulary::role_numbers::{
     COMBO_BOX, ENTRY, PANEL, PASSWORD_TEXT, PROGRESS_BAR, PUSH_BUTTON, SLIDER, TEXT,
@@ -209,7 +212,9 @@ mod cell_text_on_a_bus {
     #[zbus::interface(name = "org.a11y.atspi.Text")]
     impl Text {
         fn get_text(&self, _start: i32, end: i32) -> String {
-            assert_eq!(end, -1);
+            if end != super::super::MAX_TEXT_CHARACTERS {
+                return format!("unbounded end {end}");
+            }
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.content.to_owned()
         }
@@ -259,4 +264,12 @@ mod cell_text_on_a_bus {
         assert!(matches!(value, Field::Absent));
         assert_eq!(calls, 1);
     }
+}
+
+#[test]
+fn a_cell_read_that_fills_the_character_cap_may_go_on_past_it() {
+    let cap = usize::try_from(MAX_TEXT_CHARACTERS).unwrap();
+    assert!(reaches_text_cap(&"é".repeat(cap)));
+    assert!(!reaches_text_cap(&"é".repeat(cap - 1)));
+    assert!(!reaches_text_cap(""));
 }

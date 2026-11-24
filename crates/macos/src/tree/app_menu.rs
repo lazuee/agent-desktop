@@ -225,14 +225,49 @@ fn surface_from_app(
     Ok(None)
 }
 
+/// How far a surface search opens the elements below its root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ChildExpansion {
+    /// A menu hangs directly below the element that shows it, so an element
+    /// with more than `ANCHOR_CHILD_LIMIT` children is a content container and
+    /// stays closed: reading its items made the search grow with the content
+    /// of every window.
+    AnchorsOnly,
+    /// A popover can hang below a control inside a list or a table row, so
+    /// every element is opened. `MAX_SURFACE_NODES` and the deadline still
+    /// bound the search, and reaching the limit is reported as incomplete.
+    EveryNode,
+}
+
+impl ChildExpansion {
+    fn opens(self, children: usize) -> bool {
+        match self {
+            Self::AnchorsOnly => children <= super::surface_inventory::ANCHOR_CHILD_LIMIT,
+            Self::EveryNode => true,
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
+pub(super) fn find_transient_surface(
+    root: AXElement,
+    source: String,
+    deadline: Deadline,
+) -> Result<Option<(String, AXElement)>, AdapterError> {
+    find_menu_descendant(root, source, Transient::MenuOrPopover, deadline)
+}
+
 fn find_menu_descendant(
     root: AXElement,
     source: String,
     accept: Transient,
     deadline: Deadline,
 ) -> Result<Option<(String, AXElement)>, AdapterError> {
-    find_surface_descendant_with(root, source, deadline, |element, expand| {
+    let expansion = match accept {
+        Transient::Menu => ChildExpansion::AnchorsOnly,
+        Transient::MenuOrPopover => ChildExpansion::EveryNode,
+    };
+    find_surface_descendant_with(root, source, expansion, deadline, |element, expand| {
         let role = surface_read::string(element, "AXRole", deadline)?;
         if role.as_deref() == Some("AXMenuBar") {
             return Ok((false, Vec::new()));
@@ -256,15 +291,14 @@ fn find_menu_descendant(
 }
 
 /// Breadth-first search below `root` for a transient surface: a menu, or a
-/// popover. Such a surface hangs directly below the element that shows it,
-/// so every child is checked, but the items of a content container (more than
-/// `ANCHOR_CHILD_LIMIT` children: a list, a table, a column of a browser) are
-/// not opened: what lies inside an item is that item's content, and reading it
-/// made the search grow with the content of every window. `inspect` gets
-/// whether it may return the element's children.
+/// popover. `expansion` decides how far the search opens the tree, because a
+/// menu and a popover hang differently: a menu sits directly below its anchor,
+/// while a popover can sit below a control inside a list or a table row.
+/// `inspect` gets whether it may return the element's children.
 pub(super) fn find_surface_descendant_with<T>(
     root: T,
     source: String,
+    expansion: ChildExpansion,
     deadline: Deadline,
     mut inspect: impl FnMut(&T, bool) -> Result<(bool, Vec<T>), AdapterError>,
 ) -> Result<Option<(String, T)>, AdapterError> {
@@ -288,7 +322,7 @@ pub(super) fn find_surface_descendant_with<T>(
         if is_menu {
             return Ok(Some((path, element)));
         }
-        let expand_children = children.len() <= super::surface_inventory::ANCHOR_CHILD_LIMIT;
+        let expand_children = expansion.opens(children.len());
         pending.extend(
             children
                 .into_iter()
@@ -338,3 +372,7 @@ fn surface_limit_error() -> AdapterError {
 #[cfg(test)]
 #[path = "app_menu_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_menu_search_tests.rs"]
+mod search_tests;

@@ -21,16 +21,15 @@ pub enum WitnessChange {
 
 impl WitnessChange {
     /// A change that only the action explains. A window title, the window's
-    /// content, the number of windows, and focus moving elsewhere in the window
-    /// can also change by themselves (a timer, a notification), so they are
-    /// weak evidence.
+    /// content, the number of windows, the target's value and focus moving
+    /// elsewhere in the window can also change by themselves (a timer, a
+    /// playing scrubber, a notification), so they are weak evidence.
     pub fn is_strong(self) -> bool {
         matches!(
             self,
             Self::TargetGone
                 | Self::WindowClosed
                 | Self::TargetSelected
-                | Self::TargetValue
                 | Self::SurfaceOpened
                 | Self::FocusIntoTarget
         )

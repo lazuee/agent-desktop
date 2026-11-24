@@ -38,11 +38,10 @@ pub unsafe extern "C" fn ad_execute_action(
 
 /// Low-level native-handle action with explicit interaction policy. Dispatches
 /// directly to the platform adapter without strict ref re-identification or
-/// actionability preflight. The `policy` discriminant is applied verbatim — no
-/// base-policy elevation is performed. This is a raw escape hatch for callers
-/// that already hold a live native handle. Callers wanting CLI-semantics parity
-/// (RefStore load → strict resolution → preflight → dispatch with base-policy
-/// join) should use `ad_execute_by_ref` instead.
+/// actionability preflight. The `policy` discriminant is applied verbatim.
+/// This is a raw escape hatch for callers that already hold a live native
+/// handle. Callers wanting CLI-semantics parity (RefStore load → strict
+/// resolution → preflight → dispatch) should use `ad_execute_by_ref` instead.
 ///
 /// # Safety
 ///

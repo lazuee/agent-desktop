@@ -155,14 +155,14 @@ fn an_incomplete_scan_still_reports_the_dialog_it_saw() {
 }
 
 #[test]
-fn a_showing_alert_lists_an_alert_entry_in_place_of_the_sheet_entry() {
+fn a_showing_modal_alert_lists_both_an_alert_and_a_sheet_entry() {
     let mut alert = window("w-1", "Save changes?", true);
     alert.alert = true;
     let kinds: Vec<_> = surfaces_of(&[alert])
         .iter()
         .map(|surface| surface.kind.clone())
         .collect();
-    assert_eq!(kinds, ["window", "alert"]);
+    assert_eq!(kinds, ["window", "alert", "sheet"]);
     let mut plain = window("w-2", "Doc", false);
     plain.alert = false;
     assert_eq!(surfaces_of(&[plain]).len(), 1);

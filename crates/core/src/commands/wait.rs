@@ -180,12 +180,7 @@ fn wait_for_surface(
         }
         deadline.pause(Duration::from_millis(100));
     }
-    wait_timeout::surface(
-        kind.map_or("any", |kind| kind.as_str()),
-        timeout_ms,
-        last_observed.as_deref(),
-        last_error,
-    )
+    wait_timeout::surface(kind, timeout_ms, last_observed.as_deref(), last_error)
 }
 
 fn wait_for_window(
@@ -367,6 +362,9 @@ mod scenario_menu_tests;
 #[cfg(test)]
 #[path = "wait_scenario_tests.rs"]
 mod scenario_tests;
+#[cfg(test)]
+#[path = "wait_surface_scenario_tests.rs"]
+mod surface_scenario_tests;
 
 #[cfg(test)]
 #[path = "wait_element_tests.rs"]

@@ -383,7 +383,7 @@ fn rect_field(dict: &WindowDictionary, key: &str) -> Option<Rect> {
     })
 }
 
-fn int_or_float_field(dict: &WindowDictionary, key: &str) -> Option<f64> {
+pub(super) fn int_or_float_field(dict: &WindowDictionary, key: &str) -> Option<f64> {
     use crate::tree::properties::cf_type::borrowed_cf_number;
     use core_foundation::base::TCFType;
 

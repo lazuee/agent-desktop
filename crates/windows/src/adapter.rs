@@ -56,10 +56,44 @@ impl Default for WindowsAdapter {
 }
 
 impl ObservationOps for WindowsAdapter {
-    /// A popover belongs to the application, not to one window: its refs resolve
-    /// against the application's open popover.
+    /// A popover belongs to the application, not to a census window: its refs
+    /// stay observable while the process lives, and `surface_window` records
+    /// the popover a capture read so resolution lands on that one.
     fn is_application_surface(&self, surface: SnapshotSurface) -> bool {
         surface == SnapshotSurface::Popover
+    }
+
+    /// A popover is presented by a popup window of its own, so a capture names
+    /// that window. With several popovers open, the refs it allocates then
+    /// resolve against the popover that was read instead of whichever the
+    /// process happens to show first.
+    fn surface_window(
+        &self,
+        app: &agent_desktop_core::AppInfo,
+        surface: SnapshotSurface,
+        deadline: Deadline,
+    ) -> Result<Option<WindowInfo>, AdapterError> {
+        if surface != SnapshotSurface::Popover {
+            return Ok(None);
+        }
+        crate::tree::popover_choice::popover_window(app, deadline).map(Some)
+    }
+
+    /// A stored popover ref, or a capture that named one with `--window-id`,
+    /// names the popover it means, so it resolves against that window and
+    /// never against whichever popover the process shows first.
+    fn recorded_surface_window(
+        &self,
+        process: agent_desktop_core::ProcessIdentity,
+        window_id: &str,
+        surface: SnapshotSurface,
+        deadline: Deadline,
+    ) -> Result<Option<WindowInfo>, AdapterError> {
+        if surface != SnapshotSurface::Popover {
+            return Ok(None);
+        }
+        crate::tree::popover_choice::recorded_popover_window(&process, window_id, deadline)
+            .map(Some)
     }
 
     fn observe_tree(

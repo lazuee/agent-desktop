@@ -200,11 +200,14 @@ pub(super) fn close(world: &impl World, request: &Request<'_>) -> Result<bool, A
     }
     let prior = (!request.policy.allow_focus_steal).then(|| world.read_prior());
     let focus_unreadable = matches!(prior, Some(PriorFocus::Unreadable));
-    let sent = request_close(world, request, focus_unreadable)?;
-    let returned = sent
-        && prior
-            .and_then(PriorFocus::held)
-            .is_some_and(|prior| world.watch_focus(&prior));
+    let outcome = request_close(world, request, focus_unreadable);
+    let held = prior.and_then(PriorFocus::held);
+    let delivered = match &outcome {
+        Ok(sent) => *sent,
+        Err(error) => error.disposition != DeliverySemantics::not_delivered(),
+    };
+    let returned = delivered && held.is_some_and(|prior| world.watch_focus(&prior));
+    let sent = outcome?;
     if !sent && world.liveness() == Liveness::Gone {
         return Ok(false);
     }

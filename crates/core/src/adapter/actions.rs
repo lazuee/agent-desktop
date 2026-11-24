@@ -48,6 +48,9 @@ pub trait ActionOps: Send + Sync {
         Err(AdapterError::not_supported("execute_action"))
     }
 
+    /// Scroll the element into view. `policy` decides whether a route that
+    /// takes the foreground is allowed; a headless policy runs only the routes
+    /// that leave it alone.
     fn scroll_into_view(
         &self,
         handle: &NativeHandle,

@@ -1,7 +1,7 @@
 use super::{frame_listed, may_own_popup, surfaces_of};
 use crate::tree::AtspiElement;
 use crate::tree::test_support::helpers::{read_of, words};
-use crate::tree::vocabulary::role_numbers::{COMBO_BOX, MENU};
+use crate::tree::vocabulary::role_numbers::{COMBO_BOX, LIST, MENU};
 use crate::tree::vocabulary::state_bits::{EXPANDED, HAS_POPUP, SHOWING, StateBits};
 use crate::tree::{Field, ObservedRead, WalkedNode};
 
@@ -38,6 +38,21 @@ fn the_surfaces_of_a_target_are_the_popups_that_show_below_it() {
     let mut unread = node(COMBO_BOX, &[], Vec::new());
     unread.payload.node.traits.states = Field::Failed("gone".to_owned());
     assert_eq!(surfaces_of(&unread), None);
+}
+
+#[test]
+fn a_popup_count_that_missed_a_menu_is_unknown() {
+    let mut menu_unread = node(MENU, &[], Vec::new());
+    menu_unread.payload.node.traits.states = Field::Failed("gone".to_owned());
+    assert_eq!(surfaces_of(&node(COMBO_BOX, &[], vec![menu_unread])), None);
+
+    let mut cut = node(COMBO_BOX, &[], vec![node(MENU, &[], Vec::new())]);
+    cut.children[0].truncated = true;
+    assert_eq!(surfaces_of(&cut), None);
+
+    let mut rows_cut = node(COMBO_BOX, &[], vec![node(LIST, &[], Vec::new())]);
+    rows_cut.children[0].truncated = true;
+    assert_eq!(surfaces_of(&rows_cut), Some(0));
 }
 
 #[test]

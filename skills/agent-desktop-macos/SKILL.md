@@ -10,44 +10,45 @@ description: >
 
 # agent-desktop on macOS
 
-Use the core skill's headless observe, act, verify workflow. A platform capability never
-authorizes `--headed`; only the user's explicit request does.
+Use the core skill's headless observe, act, verify workflow. A platform capability
+never authorizes `--headed`; only the user's explicit request does.
 
 ## Setup and permissions
 
 The sandbox provider on macOS is `macos`: a macOS VM needing an Apple Silicon Mac, macOS 13 or later on the host and guest, and Xcode Command Line Tools. The first setup needs a person in the guest window; clones need none. See `agent-browser.dev/desktop/sandboxes/macos`.
 
-`agent-desktop status` reports `permissions` and `supported_surfaces`. Accessibility must
-be `granted` for observation and actions, Screen Recording for screenshots including
-session artifacts. Grant the launching app, and the binary if listed separately. Ask the
-user, then confirm with `agent-desktop permissions`. A new CLI call sees a new grant; a
-batch keeps its cached report.
+`agent-desktop status` reports `permissions` and `supported_surfaces`.
+Accessibility must be `granted` for observation and actions; Screen Recording
+must be `granted` for screenshots, including session screenshot artifacts.
+Grant access to the app that launches the CLI and to the binary if listed
+separately. Ask the user to change the relevant privacy permissions, then confirm
+with `agent-desktop permissions`. A new CLI call sees a new grant; a batch
+retains its process's cached report.
 
-`permissions` does not prompt. The guide opens a visible settings page, so ask the
-user first; it offers the app that started the process tree (under tmux, the app that
-started the tmux server, which can differ from your terminal; under SSH, the binary).
-Automation may report `unknown` when consent would require a prompt.
+`permissions` does not prompt. Requests use a bounded isolated helper.
+The permission guide opens a visible settings page and guide panel, so ask the
+user before starting it. It offers the app that started agent-desktop's process
+tree: under tmux, the app that started the tmux server, which can differ from
+the terminal you attach from; under SSH, the `agent-desktop` binary. Automation
+may report `unknown` when consent would require a prompt.
 
 ## Platform behavior
 
-- Native AX element tokens identify individual controls, including twins. A stale token
-  never falls back to a look-alike search; elements without one follow the core rule.
+- Native AX element tokens identify individual controls, including twins. A stale
+  token never falls back to a look-alike search. Elements without a token follow
+  the uniqueness rule of the core skill.
 - `list-windows` also lists a floating or panel window an app raises above the
   normal level, as accessory apps do with settings and panels, while it is on screen.
 - `menu` and `menubar` observations are application-owned and can omit `data.window`.
   An app without an ordinary window may still expose process-owned surfaces.
   Inspect `supported_surfaces` rather than assuming every surface exists.
 - `agent-desktop press escape --app <app>` closes an open menu or popover with its
-  cancel action when no focused element takes Escape, and reads that it closed. A
+  cancel action when no focused element takes Escape, and reads that it closed;
+  with `--window-id <id>` it closes the surface that window or the app shows. A
   popover can appear a moment after the click that opens it: read it with
   `snapshot --app <app> --surface popover`.
 - `list-surfaces` lists the sheets, dialogs and popovers of every window, not only
   the focused one. A system service panel, such as AirDrop from a share, is a dialog.
-- A control with no ref takes a headless window-relative click: capture with
-  `screenshot --window-id w-4521 --window-frame f.png`, divide image coordinates by
-  `scale_factor`, then `mouse-click --window-id w-4521 --window-xy 120,95` in points from the
-  frame's top-left. Target the frontmost on-screen window; a window behind a sibling of the
-  same app is refused because macOS reorders it on click. The post is `delivered_unverified`.
 - Headless menu-opening and dialog-opening actions can refuse before delivery.
   A label ending in an ellipsis predicts a dialog; it does not prove one exists.
   A click on a button inside a popover refuses with `kind: popover_command`: a
@@ -55,6 +56,9 @@ Automation may report `unknown` when consent would require a prompt.
   refusal rather than changing mode.
 - A file-name text field is not a file-system rename interface. Value-write
   actions refuse it because a changed field could falsely imply a renamed file.
+- A tab button (`AXRadioButton`, subrole `AXTabButton`) is selected by press
+  rather than writing `AXValue` (which crashes Chromium); if a web tab ignores
+  that press, report it and use `click --headed` only when the user asked.
 - Chromium accessibility is enabled by the adapter when needed. A sparse or
   incomplete read still needs another observation, not an assumption of absence.
 - A table cell carries its grid address in `native_id` (kind `grid_cell`, for
@@ -74,11 +78,6 @@ Automation may report `unknown` when consent would require a prompt.
   cell editor no keyboard input from a press always takes that failure; type there
   with `--headed` only if the user explicitly asked for that. The write also commits
   an edit that is open in another cell.
-- A tab (`AXRadioButton` with subrole `AXTabButton`) is said to be selected, not
-  checked. `check` on one presses it rather than writing `AXValue`, because writing
-  `AXValue` on a web `role="tab"` crashes Chromium-based browsers. Some web tab
-  widgets ignore that press, so `check` reports that the state was not reached;
-  select those with `click --headed`.
 - AX success alone does not prove an application effect. Verify the task's
   result independently, especially after a menu action or a value write.
 

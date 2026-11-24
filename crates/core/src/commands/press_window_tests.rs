@@ -89,9 +89,9 @@ impl SystemOps for TwoInstancesAdapter {
         &self,
         window: &crate::WindowInfo,
         _lease: &crate::InteractionLease,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
         *self.focused_window.lock().unwrap() = Some(window.id.clone());
-        Ok(())
+        Ok(crate::DeliverySemantics::delivered_unverified())
     }
 
     fn focused_window(

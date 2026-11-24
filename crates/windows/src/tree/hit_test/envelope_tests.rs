@@ -140,8 +140,8 @@ impl SystemOps for EnvelopeAdapter {
         &self,
         _window: &WindowInfo,
         _lease: &InteractionLease,
-    ) -> Result<(), AdapterError> {
-        Ok(())
+    ) -> Result<agent_desktop_core::DeliverySemantics, AdapterError> {
+        Ok(agent_desktop_core::DeliverySemantics::delivered_unverified())
     }
 }
 
@@ -205,7 +205,7 @@ fn entry_for(live: &LiveElement) -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: Default::default(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }

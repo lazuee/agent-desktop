@@ -20,7 +20,7 @@ mod imp {
         element: &AXElement,
         deadline: Deadline,
     ) -> Result<EffectWitness, AdapterError> {
-        surface_read::string(element, "AXRole", deadline)?;
+        let role = surface_read::string(element, "AXRole", deadline)?;
         let app = crate::system::app::app_ops::pid_from_element(element, deadline)
             .map(crate::tree::element_for_pid);
         let focus = match app.map(|app| {
@@ -36,7 +36,7 @@ mod imp {
                     .ok()
                     .flatten(),
                 value: crate::tree::copy_value_typed(element, deadline),
-                surfaces: surfaces_below(element, deadline),
+                surfaces: surfaces_below(element, role.as_deref(), deadline),
             },
             focus,
             window: WindowWitness::default(),
@@ -54,23 +54,23 @@ mod imp {
     }
 
     /// Open menus and popovers directly below the element: a menu control's
-    /// own menu, or a popover a control anchors.
-    fn surfaces_below(element: &AXElement, deadline: Deadline) -> Option<u32> {
-        if let Some(open) = crate::actions::owned_menu::owned_menu_open(element, deadline) {
-            return Some(u32::from(open));
+    /// own menu, or a popover a control anchors. `None` when a menu or a
+    /// child's role could not be read: an uncounted surface would make a later
+    /// whole read look like a surface the action opened.
+    fn surfaces_below(element: &AXElement, role: Option<&str>, deadline: Deadline) -> Option<u32> {
+        use crate::actions::owned_menu::{is_menu_control, menu_open};
+        if role.is_some_and(is_menu_control) {
+            return menu_open(element, deadline).map(u32::from);
         }
         let children = surface_read::elements(element, "AXChildren", deadline).ok()?;
         if children.len() > crate::tree::surface_inventory::ANCHOR_CHILD_LIMIT {
             return None;
         }
-        let popovers = children.iter().filter(|child| {
-            surface_read::string(child, "AXRole", deadline)
-                .ok()
-                .flatten()
-                .as_deref()
-                == Some("AXPopover")
-        });
-        u32::try_from(popovers.count()).ok()
+        super::popover_count(
+            children
+                .iter()
+                .map(|child| surface_read::string(child, "AXRole", deadline)),
+        )
     }
 
     fn focus_of(focused: &AXElement, element: &AXElement, deadline: Deadline) -> FocusWitness {
@@ -186,3 +186,19 @@ mod imp {
 
 #[cfg(target_os = "macos")]
 pub(crate) use imp::{read, read_local};
+
+/// The popovers among children's roles, or `None` when a role read failed. A
+/// child with no role is no popover.
+fn popover_count<E>(roles: impl Iterator<Item = Result<Option<String>, E>>) -> Option<u32> {
+    let mut count = 0;
+    for role in roles {
+        if role.ok()?.as_deref() == Some("AXPopover") {
+            count += 1;
+        }
+    }
+    Some(count)
+}
+
+#[cfg(test)]
+#[path = "effect_witness_tests.rs"]
+mod tests;

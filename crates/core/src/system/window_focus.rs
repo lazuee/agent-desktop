@@ -1,24 +1,66 @@
 use std::time::Duration;
 
-use crate::{AdapterError, AppError, ErrorCode, PlatformAdapter, WindowFilter, WindowInfo};
+use crate::{
+    AdapterError, AppError, DeliverySemantics, ErrorCode, PlatformAdapter, WindowFilter, WindowInfo,
+};
 
 const FOCUS_SETTLE_TIMEOUT_MS: u64 = 750;
 const FOCUS_POLL_INTERVAL_MS: u64 = 50;
 const FOCUS_CONFIRMATIONS: u8 = 2;
 
+/// Focuses the window and returns it with how far the focus got. A dispatch
+/// the adapter reports as sent becomes verified only after this confirmation
+/// observes the window focused; one that sent nothing stays not-delivered even
+/// when the window is now focused or the confirmation itself fails.
 pub(crate) fn focus_and_confirm(
     adapter: &dyn PlatformAdapter,
     window: &WindowInfo,
     lease: &crate::InteractionLease,
-) -> Result<WindowInfo, AppError> {
-    adapter.focus_window(window, lease)?;
-    wait_for_focused_window_with_poll_interval(
+) -> Result<(WindowInfo, DeliverySemantics), AppError> {
+    let dispatch = adapter.focus_window(window, lease)?;
+    let focused = wait_for_focused_window_with_poll_interval(
         adapter,
         &window.id,
         Some(&window.app),
         Duration::from_millis(FOCUS_POLL_INTERVAL_MS),
         lease.deadline(),
     )
+    .map_err(|error| stamp_failed_confirmation(error, dispatch))?;
+    let disposition = if dispatch == DeliverySemantics::not_delivered() {
+        DeliverySemantics::not_delivered()
+    } else {
+        DeliverySemantics::delivered_verified()
+    };
+    Ok((focused, disposition))
+}
+
+fn stamp_failed_confirmation(error: AppError, dispatch: DeliverySemantics) -> AppError {
+    let disposition = if dispatch == DeliverySemantics::not_delivered() {
+        DeliverySemantics::not_delivered()
+    } else {
+        DeliverySemantics::delivered_unverified()
+    };
+    match error {
+        AppError::Adapter(error) => AppError::Adapter(error.with_disposition(disposition)),
+        other => other,
+    }
+}
+
+/// The window when it is already the focused one by `FOCUS_CONFIRMATIONS`
+/// consecutive reads, so a focus request has nothing to send.
+pub(crate) fn already_focused(
+    adapter: &dyn PlatformAdapter,
+    window: &WindowInfo,
+    deadline: crate::Deadline,
+) -> Option<WindowInfo> {
+    let mut focused = None;
+    for _ in 0..FOCUS_CONFIRMATIONS {
+        match observed_focused_window(adapter, Some(&window.app), deadline) {
+            Ok(Some(observed)) if observed.id == window.id => focused = Some(observed),
+            _ => return None,
+        }
+    }
+    focused
 }
 
 pub(crate) fn wait_for_focused_window_with_poll_interval(

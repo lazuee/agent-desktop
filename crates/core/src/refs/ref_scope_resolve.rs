@@ -3,6 +3,8 @@
 //! lands the chain and the element one verified step at a time, each step
 //! starting from the live element the step before it verified.
 
+use std::sync::Arc;
+
 use crate::{
     AdapterError, Deadline, IdentityMatch, NativeHandle, PlatformAdapter, RefEntry,
     RefEntryIdentity,
@@ -63,7 +65,7 @@ pub(crate) fn match_in_scope(
 /// previous.
 pub(crate) fn chain_nodes(
     observed: &ObservedTree,
-    chain: &[RefEntryIdentity],
+    chain: &[Arc<RefEntryIdentity>],
 ) -> Result<Vec<usize>, Miss> {
     let mut nodes = Vec::with_capacity(chain.len());
     for identity in chain.iter().rev() {
@@ -115,7 +117,7 @@ pub(crate) fn land_in_scope(
         chain_nodes(observed, &entry.scope.chain).map_err(|miss| miss.into_error(entry))?;
     let steps = ancestors
         .into_iter()
-        .zip(entry.scope.chain.iter().rev())
+        .zip(entry.scope.chain.iter().rev().map(Arc::as_ref))
         .chain([(found, &entry.identity)]);
     let mut base: Option<NativeHandle> = None;
     let mut consumed: &[usize] = &[];

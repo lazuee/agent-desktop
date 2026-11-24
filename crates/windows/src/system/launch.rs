@@ -1,7 +1,7 @@
 use agent_desktop_core::{
     AdapterError, Deadline, DeliverySemantics, ErrorCode, InteractionLease, LaunchFacts,
-    LaunchGuidance, ProcessId, RendererKind, WindowFilter, WindowInfo,
-    system::launch_options::LaunchOptions, system::launch_result::LaunchResult,
+    LaunchGuidance, ProcessId, RendererKind, WindowInfo, system::launch_options::LaunchOptions,
+    system::launch_result::LaunchResult,
 };
 #[cfg(test)]
 use std::collections::BTreeMap;
@@ -11,8 +11,9 @@ use std::time::Duration;
 #[cfg(test)]
 use self::launch_attach::matching_processes;
 use self::launch_attach::prepare;
+use self::launch_observe::{observe_window, observe_window_once};
 use super::app_ops::ProcessRow;
-use super::launch_focus::{give_back, read_foreground, startup_show};
+use super::launch_focus::{Progress, Watch, read_foreground, startup_show};
 use super::launch_path::{
     child_environment_block, image_file_name, launch_identifier, validate_launch_options,
 };
@@ -21,7 +22,18 @@ use super::launch_path::{to_wide, to_wide_str};
 use super::process_identity;
 #[cfg(target_os = "windows")]
 use super::runtime::hresult::win32_last_error;
-use super::window::window_ops::list_windows_live;
+
+const ATTACHED: LaunchFacts = LaunchFacts {
+    attached: true,
+    activation_dispatched: false,
+    postcondition_observed: false,
+};
+
+const SPAWNED: LaunchFacts = LaunchFacts {
+    attached: false,
+    activation_dispatched: false,
+    postcondition_observed: true,
+};
 
 const ATTACHED: LaunchFacts = LaunchFacts {
     attached: true,
@@ -55,15 +67,18 @@ pub(crate) fn launch_app_impl(
     }
     let prior = (!options.activate).then(read_foreground).flatten();
     let (pid, token) = create_process(&executable, options, deadline)?;
-    let focus_returned = prior.is_some_and(|prior| {
-        give_back(prior, pid, &lease, || {
-            matches!(observe_window_once(pid, &token, deadline), Ok(Some(_)))
-        })
-    });
-    if !options.activate {
-        drop(lease);
-    }
-    let window = observe_window(pid, &token, options, deadline)?;
+    let (focus_returned, window) = if options.activate {
+        (
+            false,
+            observe_window(pid, &token, options, deadline, &Progress::new()),
+        )
+    } else {
+        Watch::new(prior, pid, lease).beside(
+            || matches!(observe_window_once(pid, &token, deadline), Ok(Some(_))),
+            |progress| observe_window(pid, &token, options, deadline, progress),
+        )
+    };
+    let window = window?;
     let mut result = launch_result(id, pid, token, window, SPAWNED);
     result.guidance.focus_returned = focus_returned;
     if focus_returned {
@@ -72,32 +87,6 @@ pub(crate) fn launch_app_impl(
         }
     }
     Ok(result)
-}
-
-/// The window a launch actually caused, or `None`. A process that presents no
-/// window is a fact the caller reads from `LaunchResult.window`, not a failure:
-/// a background or windowless process is a legitimate launch outcome, and
-/// erroring on it made every such launch spend its whole timeout first.
-fn observe_window(
-    pid: ProcessId,
-    process_instance: &str,
-    options: &LaunchOptions,
-    deadline: Deadline,
-) -> Result<Option<WindowInfo>, AdapterError> {
-    let mut poll_interval = Duration::from_millis(50);
-    loop {
-        if let Some(window) = observe_window_once(pid, process_instance, deadline)? {
-            return Ok(Some(window));
-        }
-        if !should_poll_after_first_observation(options.timeout_ms)
-            || deadline.remaining().is_zero()
-        {
-            return Ok(None);
-        }
-        let remaining = deadline.remaining();
-        std::thread::sleep(poll_interval.min(remaining));
-        poll_interval = (poll_interval * 3 / 2).min(Duration::from_millis(250));
-    }
 }
 
 fn launch_result(
@@ -139,59 +128,6 @@ fn detect_renderer_from_window(window: &WindowInfo) -> Option<RendererKind> {
 #[cfg(not(target_os = "windows"))]
 fn detect_renderer_from_window(_window: &WindowInfo) -> Option<RendererKind> {
     None
-}
-
-/// One window observation, tolerant of the inventory's mid-walk identity race.
-///
-/// `list_windows_live` now absorbs that race itself (the shared listing-retry
-/// budget every caller on this path shares), retrying internally before ever
-/// returning `WINDOW_NOT_FOUND` — so this function no longer re-reads the
-/// inventory itself. A launch is exactly the moment that race is most
-/// reachable, since a process was just created or terminated, but a race that
-/// still survives the shared budget, and a budget that runs out entirely
-/// (`TIMEOUT`), both say the desktop could not be read coherently in time —
-/// not that this launch failed — so both are reported as no window observed.
-/// Every other failure still propagates: a target whose process instance
-/// changed underneath the launch is a real answer, not a race.
-fn observe_window_once(
-    pid: ProcessId,
-    process_instance: &str,
-    deadline: Deadline,
-) -> Result<Option<WindowInfo>, AdapterError> {
-    match exact_window(pid, process_instance, deadline) {
-        Ok(window) => Ok(window),
-        Err(error) if is_unobservable_within_budget(&error) => Ok(None),
-        Err(error) => Err(after_launch(error)),
-    }
-}
-
-fn is_unobservable_within_budget(error: &AdapterError) -> bool {
-    matches!(error.code, ErrorCode::WindowNotFound | ErrorCode::Timeout)
-}
-
-fn exact_window(
-    pid: ProcessId,
-    process_instance: &str,
-    deadline: Deadline,
-) -> Result<Option<WindowInfo>, AdapterError> {
-    let windows = list_windows_live(
-        &WindowFilter {
-            focused_only: false,
-            app: None,
-        },
-        deadline,
-    )?;
-    let Some(window) = windows.into_iter().find(|window| window.pid == pid) else {
-        return Ok(None);
-    };
-    if window.process_instance.as_deref() != Some(process_instance) {
-        return Err(AdapterError::new(
-            ErrorCode::AppUnresponsive,
-            "Application process instance changed while waiting for its window",
-        )
-        .with_details(serde_json::json!({ "pid": pid, "complete": false })));
-    }
-    Ok(Some(window))
 }
 
 /// Refuses a relative working directory before it reaches `CreateProcessW`.
@@ -375,9 +311,8 @@ fn after_launch(error: AdapterError) -> AdapterError {
     error.with_disposition(DeliverySemantics::delivered_unverified())
 }
 
-fn should_poll_after_first_observation(timeout_ms: u64) -> bool {
-    timeout_ms > 0
-}
+#[path = "launch_observe.rs"]
+mod launch_observe;
 
 #[cfg(test)]
 #[path = "launch_tests.rs"]

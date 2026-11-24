@@ -32,7 +32,20 @@ pub(crate) struct Prior {
 enum Look {
     Stolen,
     Appeared,
+    Elsewhere,
     Nothing,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MatchScope {
+    NewOnly,
+    AnyOwned,
+}
+
+struct Watch<'a, F> {
+    prior: &'a Prior,
+    scope: MatchScope,
+    belongs: &'a F,
 }
 
 pub(crate) fn read_prior(deadline: Deadline) -> PriorFocus<Prior> {
@@ -59,19 +72,36 @@ pub(crate) fn read_prior(deadline: Deadline) -> PriorFocus<Prior> {
     }
 }
 
-fn judge(prior: &Prior, state: &X11State, belongs: &impl Fn(u32) -> bool) -> Look {
+fn judge<F: Fn(u32) -> bool>(watch: &Watch<'_, F>, state: &X11State) -> Look {
     let X11State::Ready { active, clients } = state else {
         return Look::Nothing;
     };
-    let launched = |id: u32| {
+    let prior = watch.prior;
+    let belongs = watch.belongs;
+    let new_owned = |id: u32| {
         clients
             .iter()
             .any(|c| c.id == id && !prior.known.contains(&id) && c.pid.is_some_and(belongs))
     };
+    let stolen = |id: u32| {
+        id != prior.client
+            && (watch.scope == MatchScope::AnyOwned || !prior.known.contains(&id))
+            && clients
+                .iter()
+                .any(|c| c.id == id && c.pid.is_some_and(belongs))
+    };
+    let elsewhere = |id: u32| {
+        id != prior.client
+            && clients
+                .iter()
+                .any(|c| c.id == id && c.pid.is_some_and(|pid| !belongs(pid)))
+    };
     let prior_open = clients.iter().any(|c| c.id == prior.client);
-    if prior_open && active.is_some_and(launched) {
+    if prior_open && active.is_some_and(stolen) {
         Look::Stolen
-    } else if clients.iter().any(|c| launched(c.id)) {
+    } else if active.is_some_and(elsewhere) {
+        Look::Elsewhere
+    } else if clients.iter().any(|c| new_owned(c.id)) {
         Look::Appeared
     } else {
         Look::Nothing
@@ -119,28 +149,52 @@ impl Desktop for Live {
 /// Waits for the launched application's window and, when it took the focus,
 /// asks the window manager to return it to the window that had it. True only
 /// when the display server names that window active afterwards. The wait ends
-/// early when `keeps_waiting` says the launch cannot show a window.
+/// early when `keeps_waiting` says the launch cannot show a window, and when
+/// the user moves the focus to a window that is not the launch's, which is
+/// never taken back.
 pub(crate) fn give_back(
     prior: &Prior,
     belongs: impl Fn(u32) -> bool,
     keeps_waiting: impl FnMut() -> bool,
     deadline: Deadline,
 ) -> bool {
-    give_back_in(&Live, prior, &belongs, keeps_waiting, deadline)
+    let watch = Watch {
+        prior,
+        scope: MatchScope::NewOnly,
+        belongs: &belongs,
+    };
+    give_back_in(&Live, &watch, keeps_waiting, deadline)
 }
 
-fn give_back_in(
-    desktop: &impl Desktop,
+/// Like [`give_back`], but also treats activation of a pre-existing window
+/// owned by the target as stolen focus (for example an inline save prompt on
+/// graceful close), while leaving `prior` and unrelated windows untouched.
+pub(crate) fn give_back_owned(
     prior: &Prior,
-    belongs: &impl Fn(u32) -> bool,
+    belongs: impl Fn(u32) -> bool,
+    keeps_waiting: impl FnMut() -> bool,
+    deadline: Deadline,
+) -> bool {
+    let watch = Watch {
+        prior,
+        scope: MatchScope::AnyOwned,
+        belongs: &belongs,
+    };
+    give_back_in(&Live, &watch, keeps_waiting, deadline)
+}
+
+fn give_back_in<F: Fn(u32) -> bool>(
+    desktop: &impl Desktop,
+    watch: &Watch<'_, F>,
     mut keeps_waiting: impl FnMut() -> bool,
     deadline: Deadline,
 ) -> bool {
     let wait = deadline.capped(FOCUS_WAIT);
     let mut appeared: Option<Instant> = None;
     loop {
-        match judge(prior, &desktop.state(wait), belongs) {
-            Look::Stolen => return restore(desktop, prior, belongs, deadline),
+        match judge(watch, &desktop.state(wait)) {
+            Look::Stolen => return restore(desktop, watch, deadline),
+            Look::Elsewhere => return false,
             Look::Appeared => {
                 if appeared.get_or_insert_with(Instant::now).elapsed() >= APPEARED_GRACE {
                     return false;
@@ -155,26 +209,25 @@ fn give_back_in(
     }
 }
 
-/// Asks again while the launched window keeps the focus: an application can
+/// Asks again while the target window keeps the focus: an application can
 /// request its own activation after the first return and win the race.
-fn restore(
+fn restore<F: Fn(u32) -> bool>(
     desktop: &impl Desktop,
-    prior: &Prior,
-    belongs: &impl Fn(u32) -> bool,
+    watch: &Watch<'_, F>,
     deadline: Deadline,
 ) -> bool {
     for _ in 0..RESTORE_ATTEMPTS {
-        if !desktop.activate(prior, deadline) {
+        if !desktop.activate(watch.prior, deadline) {
             return false;
         }
         let confirm = deadline.capped(CONFIRM_WAIT);
         while !confirm.is_expired() {
-            if desktop.active() == Some(prior.client) {
+            if desktop.active() == Some(watch.prior.client) {
                 return true;
             }
             std::thread::sleep(POLL_INTERVAL.min(confirm.remaining()));
         }
-        if judge(prior, &desktop.state(deadline), belongs) != Look::Stolen {
+        if judge(watch, &desktop.state(deadline)) != Look::Stolen {
             return false;
         }
     }

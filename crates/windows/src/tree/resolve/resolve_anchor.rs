@@ -59,9 +59,11 @@ pub(crate) fn resolve_locator_anchor(
     Err(stale_ref_error(entry))
 }
 
-/// A popover ref's path starts at the application's open popover, and the
-/// popover is no listed window: the process generation is checked and the
-/// popover found by the same predicate the inventory uses.
+/// A popover ref's path starts at the popover it was captured from, and a
+/// popover is no listed window: the process generation is checked, then the
+/// popover the ref recorded is found by the same predicate the inventory uses.
+/// A ref that recorded no popover id is resolved only when one popover is
+/// open; several are refused with their ids rather than guessed at.
 #[cfg(target_os = "windows")]
 fn popover_root(entry: &RefEntry, deadline: Deadline) -> Result<Option<UIAElement>, AdapterError> {
     if entry.source.source_surface != agent_desktop_core::SnapshotSurface::Popover {
@@ -79,9 +81,25 @@ fn popover_root(entry: &RefEntry, deadline: Deadline) -> Result<Option<UIAElemen
     if !alive {
         return Err(stale_ref_error(entry));
     }
-    let popover = crate::tree::surface_inventory::first_popover(entry.process.pid, deadline)?
-        .ok_or_else(|| stale_ref_error(entry))?;
-    crate::tree::automation::root_from_hwnd(popover as isize, deadline).map(Some)
+    let popover = crate::tree::popover_choice::resolve_popover(
+        entry.process.pid,
+        entry.source.source_window_id.as_deref(),
+        deadline,
+    )
+    .map_err(|error| popover_miss(entry, error))?;
+    crate::tree::automation::root_from_hwnd(popover.handle as isize, deadline).map(Some)
+}
+
+/// A popover that is no longer open is a settled answer about the stored ref.
+/// Several open popovers with none recorded on the ref is not: it names them
+/// instead of resolving against a popover the ref never read.
+#[cfg(target_os = "windows")]
+fn popover_miss(entry: &RefEntry, error: AdapterError) -> AdapterError {
+    if error.code == agent_desktop_core::ErrorCode::WindowNotFound {
+        stale_ref_error(entry)
+    } else {
+        error
+    }
 }
 
 /// The one pure gate runs first, before any of `resolve_window_root`,

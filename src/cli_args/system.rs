@@ -251,7 +251,7 @@ pub(crate) struct WaitEventArgs {
     #[arg(
         long,
         value_name = "KIND",
-        help = "Block until a surface of this kind is open in the app: popover, sheet, alert, menu, or any. A surface already open counts, so it also finds one that opened just after a click"
+        help = "Block until a surface of this kind is open in the app: popover, sheet, alert, menu, or any of them. A surface already open counts, so it also finds one that opened just after a click"
     )]
     pub surface: Option<String>,
 }

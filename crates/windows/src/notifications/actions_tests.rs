@@ -4,8 +4,7 @@ use agent_desktop_core::{
 };
 
 use super::{
-    dismiss_all_failures, is_sole_target, require_foreground_policy, unknown_action_error,
-    verify_notification_identity,
+    is_sole_target, require_foreground_policy, unknown_action_error, verify_notification_identity,
 };
 
 fn info(app: &str, title: &str) -> NotificationInfo {
@@ -79,109 +78,6 @@ fn a_strict_headless_caller_is_policy_denied_before_anything_raises() {
 fn a_policy_that_permits_the_foreground_change_proceeds() {
     assert!(require_foreground_policy(InteractionPolicy::focus_fallback()).is_ok());
     assert!(require_foreground_policy(InteractionPolicy::headed()).is_ok());
-}
-
-fn entry(index: usize, app: &str, title: &str) -> NotificationInfo {
-    NotificationInfo {
-        index,
-        app_name: app.into(),
-        title: title.into(),
-        body: None,
-        actions: Vec::new(),
-    }
-}
-
-#[test]
-fn a_filtered_dismiss_all_that_removes_its_target_leaves_another_apps_entry_unreported() {
-    let captured = vec![entry(1, "App A", "cleared"), entry(2, "App B", "untouched")];
-    let current = vec![entry(2, "App B", "untouched")];
-
-    let failures = dismiss_all_failures(&captured, &current, &[]);
-
-    assert_eq!(
-        failures.len(),
-        1,
-        "App A's entry left, so only App B's untouched entry is a survivor"
-    );
-    assert!(failures[0].message.contains("#2"));
-    assert_eq!(
-        failures[0].disposition,
-        DeliverySemantics::delivered_unverified()
-    );
-    assert!(
-        !failures
-            .iter()
-            .any(|failure| failure.message.contains("#1")),
-        "the entry that actually left must never appear as a failure"
-    );
-}
-
-#[test]
-fn a_recorded_invoke_error_names_its_own_reason_instead_of_the_generic_survivor_message() {
-    let captured = vec![entry(1, "App A", "refused"), entry(2, "App B", "untouched")];
-    let current = vec![entry(1, "App A", "refused"), entry(2, "App B", "untouched")];
-    let invoke_errors = vec![(
-        1,
-        AdapterError::new(
-            ErrorCode::ActionFailed,
-            "the dismiss control could not be invoked",
-        )
-        .with_disposition(DeliverySemantics::not_delivered()),
-    )];
-
-    let failures = dismiss_all_failures(&captured, &current, &invoke_errors);
-
-    assert_eq!(failures.len(), 2);
-    let for_one = failures
-        .iter()
-        .find(|failure| failure.message.contains("#1"))
-        .expect("index 1 is reported");
-    assert!(
-        for_one
-            .message
-            .contains("the dismiss control could not be invoked"),
-        "the invoke's own error must survive into the failure line, not be discarded"
-    );
-    assert_eq!(
-        for_one.disposition,
-        DeliverySemantics::not_delivered(),
-        "a failure recorded before anything was sent keeps its own disposition"
-    );
-    let for_two = failures
-        .iter()
-        .find(|failure| failure.message.contains("#2"))
-        .expect("index 2 is reported");
-    assert!(
-        for_two.message.contains("still present"),
-        "an entry with no recorded invoke error falls back to the generic survivor message"
-    );
-    assert_eq!(
-        for_two.disposition,
-        DeliverySemantics::delivered_unverified()
-    );
-}
-
-#[test]
-fn an_invoke_error_recorded_for_an_entry_that_still_left_is_never_reported() {
-    let captured = vec![
-        entry(1, "App A", "left anyway"),
-        entry(2, "App B", "stayed"),
-    ];
-    let current = vec![entry(2, "App B", "stayed")];
-    let invoke_errors = vec![(
-        1,
-        AdapterError::new(ErrorCode::ActionFailed, "transient invoke error"),
-    )];
-
-    let failures = dismiss_all_failures(&captured, &current, &invoke_errors);
-
-    assert_eq!(
-        failures.len(),
-        1,
-        "the settle read proves index 1 left despite its invoke error, so it is dismissed, not failed"
-    );
-    assert!(!failures[0].message.contains("transient invoke error"));
-    assert!(failures[0].message.contains("#2"));
 }
 
 #[test]

@@ -66,12 +66,14 @@ fn a_parse_error_suggestion_leads_with_claps_tip() {
     );
 }
 
+const TOP_LEVEL_PARSE_ERROR: &str = "error: unrecognized subcommand 'clik'\n\n  tip: a similar subcommand exists: 'click'\n\nUsage: agent-desktop [OPTIONS] [COMMAND]\n\nFor more information, try '--help'.";
+
 #[test]
 fn a_parse_error_without_a_subcommand_omits_the_help_pointer() {
-    let suggestion = clap_error_suggestion(UNEXPECTED_POSITIONAL, "unknown")
-        .expect("a usage line is enough for a suggestion");
+    let suggestion = clap_error_suggestion(TOP_LEVEL_PARSE_ERROR, "unknown")
+        .expect("a tip and a usage line yield a suggestion");
 
-    assert!(suggestion.contains("Usage: agent-desktop click"));
+    assert!(suggestion.starts_with("tip: a similar subcommand exists"));
     assert!(
         !suggestion.contains("--help"),
         "no identified subcommand means no subcommand help to point at, got: {suggestion}"
@@ -79,6 +81,23 @@ fn a_parse_error_without_a_subcommand_omits_the_help_pointer() {
 }
 
 #[test]
-fn a_parse_error_without_tip_or_usage_has_no_suggestion() {
-    assert!(clap_error_suggestion("error: invalid utf-8 sequence", "click").is_none());
+fn a_nested_command_points_at_its_own_help() {
+    let message = "error: unexpected argument '--bogus' found\n\nUsage: agent-desktop.exe session start [OPTIONS]\n\nFor more information, try '--help'.";
+    let suggestion = clap_error_suggestion(message, "session").expect("a usage line");
+
+    assert!(
+        suggestion.ends_with("Run `agent-desktop session start --help` for every argument."),
+        "the pointer must name the nested command, got: {suggestion}"
+    );
+}
+
+#[test]
+fn a_parse_error_without_tip_or_usage_still_points_at_the_command_help() {
+    let message = "error: a value is required for '--app <APP>' but none was supplied\n\nFor more information, try '--help'.";
+
+    assert_eq!(
+        clap_error_suggestion(message, "snapshot").as_deref(),
+        Some("Run `agent-desktop snapshot --help` for every argument.")
+    );
+    assert!(clap_error_suggestion(message, "unknown").is_none());
 }

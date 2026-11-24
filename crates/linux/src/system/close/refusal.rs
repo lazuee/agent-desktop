@@ -110,7 +110,9 @@ pub(super) fn dialogs_unknown(request: &Request<'_>) -> AdapterError {
             request.pid
         ),
     )
-    .with_suggestion("Retry the close once the app's windows can be read")
+    .with_suggestion(
+        "The app's windows could not be read in full in time, so a save prompt could not be ruled out. Close its windows through their own controls, or use --force only if losing unsaved work is acceptable",
+    )
     .with_details(json!({
         "cause": "dialogs_unknown",
         "app": request.name,

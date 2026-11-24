@@ -68,7 +68,7 @@ fn entry() -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: Default::default(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }

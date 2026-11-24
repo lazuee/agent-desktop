@@ -73,18 +73,12 @@ fn process_identity_for_pid(
         adapter.query_app_inventory(agent_desktop_core::AppInventoryQuery::All, deadline)?;
     let mut matches = inventory
         .apps
-        .into_iter()
+        .iter()
         .filter(|app| app.pid.get() == pid)
+        .cloned()
         .collect::<Vec<_>>();
     if matches.is_empty() && !inventory.skipped.is_empty() {
-        return Err(
-            agent_desktop_core::AdapterError::app_unresponsive(&pid.to_string()).with_details(
-                serde_json::json!({
-                    "kind": "app_inventory_incomplete",
-                    "skipped": inventory.skipped,
-                }),
-            ),
-        );
+        return Err(inventory.incomplete_error(&pid.to_string()));
     }
     if matches.is_empty() {
         return Err(agent_desktop_core::AdapterError::new(

@@ -62,7 +62,7 @@ pub(crate) fn ref_entry_from_node(
             root_ref,
             path_is_absolute: false,
             path: smallvec::SmallVec::from_slice(path),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }

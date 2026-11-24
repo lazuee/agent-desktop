@@ -1,5 +1,5 @@
 use agent_desktop_core::{
-    ActionResult, AdapterError, Deadline, DismissAllNotificationsRequest,
+    ActionResult, AdapterError, Deadline, DeliverySemantics, DismissAllNotificationsRequest,
     DismissNotificationRequest, ImageBuffer, InteractionLease, NotificationActionRequest,
     NotificationFilter, NotificationInfo, OperationReport, PermissionReport, ProcessIdentity,
     ProviderScriptOutput, ProviderScriptRequest, ScreenshotTarget, SignalBaseline, SignalFilter,
@@ -80,8 +80,13 @@ impl SystemOps for MacOSAdapter {
         crate::system::renderer_activation::activate(process, lease.deadline())
     }
 
-    fn focus_window(&self, win: &WindowInfo, lease: &InteractionLease) -> Result<(), AdapterError> {
+    fn focus_window(
+        &self,
+        win: &WindowInfo,
+        lease: &InteractionLease,
+    ) -> Result<DeliverySemantics, AdapterError> {
         crate::system::focus::focus_window_impl(win, lease.deadline())
+            .map(|()| DeliverySemantics::delivered_unverified())
     }
 
     fn resolve_ref_focus_window(
@@ -224,6 +229,16 @@ impl SystemOps for MacOSAdapter {
         lease: &InteractionLease,
     ) -> Result<ActionResult, AdapterError> {
         crate::system::key_dispatch::press_for_app_impl(process, combo, policy, lease.deadline())
+    }
+
+    fn close_transient_surface(
+        &self,
+        process: &ProcessIdentity,
+        window: Option<&WindowInfo>,
+        policy: agent_desktop_core::InteractionPolicy,
+        lease: &InteractionLease,
+    ) -> Result<Option<ActionResult>, AdapterError> {
+        crate::system::escape_popup::close_transient_surface(process, window, policy, lease)
     }
 
     fn wait_for_menu(

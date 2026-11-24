@@ -6,23 +6,57 @@ use crate::{
     refs::refs_test_support::HomeGuard,
 };
 
-struct MenuAdapter {
-    apps: Vec<AppInfo>,
-    windows: Vec<WindowInfo>,
+pub(super) struct MenuAdapter {
+    pub(super) apps: Vec<AppInfo>,
+    pub(super) windows: Vec<WindowInfo>,
+    pub(super) surface_window: Option<WindowInfo>,
 }
 
 impl MenuAdapter {
-    fn windowless() -> Self {
+    pub(super) fn windowless() -> Self {
         Self {
             apps: vec![app(42)],
             windows: vec![],
+            surface_window: None,
         }
     }
 }
 
 impl ObservationOps for MenuAdapter {
     fn is_application_surface(&self, surface: SnapshotSurface) -> bool {
-        matches!(surface, SnapshotSurface::Menubar | SnapshotSurface::Menu)
+        matches!(
+            surface,
+            SnapshotSurface::Menubar | SnapshotSurface::Menu | SnapshotSurface::Popover
+        )
+    }
+
+    fn surface_window(
+        &self,
+        _app: &AppInfo,
+        surface: SnapshotSurface,
+        _deadline: Deadline,
+    ) -> Result<Option<WindowInfo>, crate::AdapterError> {
+        if surface != SnapshotSurface::Popover {
+            return Ok(None);
+        }
+        Ok(self.surface_window.clone())
+    }
+
+    fn recorded_surface_window(
+        &self,
+        process: crate::ProcessIdentity,
+        window_id: &str,
+        surface: SnapshotSurface,
+        _deadline: Deadline,
+    ) -> Result<Option<WindowInfo>, crate::AdapterError> {
+        if surface != SnapshotSurface::Popover {
+            return Ok(None);
+        }
+        Ok(self.surface_window.clone().filter(|window| {
+            window.id == window_id
+                && window.pid == process.pid
+                && window.process_instance.as_deref() == Some(process.instance.as_str())
+        }))
     }
 
     fn focused_app(&self, _deadline: Deadline) -> Result<Option<AppInfo>, crate::AdapterError> {

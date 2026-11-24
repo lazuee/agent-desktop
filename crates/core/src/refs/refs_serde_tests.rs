@@ -37,7 +37,7 @@ fn minimal_entry(role: &str) -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }
@@ -216,7 +216,7 @@ fn ref_entry_full_roundtrip_preserves_all_fields() {
             root_ref: Some("@e5".into()),
             path_is_absolute: true,
             path: smallvec::SmallVec::from_slice(&[2, 0, 1]),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     };
     let json = serde_json::to_string(&original).unwrap();
@@ -309,9 +309,9 @@ fn identity_named(role: &str, name: &str) -> crate::RefEntryIdentity {
 #[test]
 fn ref_map_stores_a_shared_scope_chain_once() {
     let mut shared = minimal_entry("button");
-    shared.scope.chain = vec![identity_named("group", "Zebra Row")];
+    shared.scope.chain = vec![identity_named("group", "Zebra Row")].into();
     let mut other = minimal_entry("button");
-    other.scope.chain = vec![identity_named("group", "Plain Row")];
+    other.scope.chain = vec![identity_named("group", "Plain Row")].into();
     let mut map = RefMap::new();
     let first = map.try_allocate(shared.clone()).unwrap();
     let twin = map.try_allocate(shared).unwrap();
@@ -331,7 +331,7 @@ fn ref_map_stores_a_shared_scope_chain_once() {
 #[test]
 fn ref_map_loads_scope_chains_stored_inline_before_the_chain_table() {
     let mut entry = minimal_entry("button");
-    entry.scope.chain = vec![identity_named("group", "Legacy Row")];
+    entry.scope.chain = vec![identity_named("group", "Legacy Row")].into();
     let legacy = serde_json::json!({
         "inner": { "@e1": serde_json::to_value(&entry).unwrap() },
         "counter": 1
@@ -352,7 +352,7 @@ fn ref_map_of_a_thousand_rows_with_twins_fits_the_size_limit() {
         for _ in 0..4 {
             let mut entry = minimal_entry("button");
             entry.identity.name = Some("Delete".into());
-            entry.scope.chain = vec![row_identity.clone()];
+            entry.scope.chain = vec![row_identity.clone()].into();
             map.try_allocate(entry).unwrap();
         }
     }

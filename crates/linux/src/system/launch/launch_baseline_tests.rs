@@ -37,6 +37,21 @@ fn residents_require_the_same_canonical_executable_but_not_the_same_arguments() 
 }
 
 #[test]
+fn a_launch_that_asks_for_a_mode_is_the_process_running_in_that_mode() {
+    use crate::system::process::executable_identity::ExecutableIdentity;
+    let identity = |argv: &[&str]| ExecutableIdentity {
+        executable: "/usr/bin/tool".into(),
+        argv: Some(argv.iter().map(|word| (*word).into()).collect()),
+    };
+    let gui = identity(&["tool", "--gui"]);
+
+    assert!(gui.is_running_as(&identity(&["tool", "--gui"])));
+    assert!(gui.is_running_as(&identity(&["tool", "--gui", "--daemon"])));
+    assert!(!gui.is_running_as(&identity(&["tool", "--cli"])));
+    assert!(!gui.is_running_as(&identity(&["tool"])));
+}
+
+#[test]
 fn an_old_frame_omitted_by_an_incomplete_baseline_cannot_be_a_launch_window() {
     let owner = Running {
         executable: None,

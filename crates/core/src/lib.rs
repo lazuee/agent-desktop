@@ -112,6 +112,7 @@ pub use refs::ref_process::RefProcess;
 pub use refs::ref_scope::RefScope;
 pub use refs::ref_source::RefSource;
 pub use refs::refs_store::RefStore;
+pub use refs::scope_chain::ScopeChain;
 pub use response::adapter_error::AdapterError;
 pub use response::app_error::AppError;
 pub use response::delivery_disposition::DeliveryDisposition;

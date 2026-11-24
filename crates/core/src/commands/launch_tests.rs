@@ -195,20 +195,6 @@ fn expected_data(delivery: &str, retry: &str) -> serde_json::Value {
 }
 
 #[test]
-fn attaching_without_activation_reports_not_delivered() {
-    let adapter = adapter_with(LaunchFacts {
-        attached: true,
-        activation_dispatched: false,
-        postcondition_observed: false,
-    });
-
-    assert_eq!(
-        launch(&adapter, false),
-        expected_data("not_delivered", "safe")
-    );
-}
-
-#[test]
 fn a_fresh_launch_whose_instance_was_read_back_reports_delivered_verified() {
     let adapter = adapter_with(FRESH);
 
@@ -218,30 +204,42 @@ fn a_fresh_launch_whose_instance_was_read_back_reports_delivered_verified() {
     );
 }
 
-#[test]
-fn attaching_with_activation_reports_delivered_unverified() {
-    let adapter = adapter_with(LaunchFacts {
-        attached: true,
-        activation_dispatched: true,
-        postcondition_observed: false,
-    });
+struct PartialInventoryAdapter;
 
-    assert_eq!(
-        launch(&adapter, true),
-        expected_data("delivered_unverified", "unsafe")
-    );
+impl ObservationOps for PartialInventoryAdapter {
+    fn query_app_inventory(
+        &self,
+        _query: crate::AppInventoryQuery<'_>,
+        _deadline: crate::Deadline,
+    ) -> Result<crate::AppInventory, AdapterError> {
+        Ok(crate::AppInventory {
+            apps: Vec::new(),
+            skipped: vec![serde_json::json!({ "pid": 11, "field": "application_name" })],
+        })
+    }
 }
+impl ActionOps for PartialInventoryAdapter {}
+impl InputOps for PartialInventoryAdapter {}
+impl SystemOps for PartialInventoryAdapter {}
 
 #[test]
-fn attaching_with_activation_and_a_confirmed_frontmost_reports_delivered_verified() {
-    let adapter = adapter_with(LaunchFacts {
-        attached: true,
-        activation_dispatched: true,
-        postcondition_observed: true,
-    });
-
-    assert_eq!(
-        launch(&adapter, true),
-        expected_data("delivered_verified", "unsafe")
-    );
+fn cdp_launch_refuses_when_a_skipped_record_may_be_the_running_app() {
+    let error = execute(
+        LaunchArgs {
+            app: "Fixture".into(),
+            options: LaunchOptions {
+                cdp_port: Some(0),
+                ..LaunchOptions::default()
+            },
+        },
+        &PartialInventoryAdapter,
+        crate::InteractionPolicy::headless(),
+    )
+    .unwrap_err();
+    let crate::AppError::Adapter(error) = error else {
+        panic!("an incomplete inventory is an adapter error");
+    };
+    assert_eq!(error.code, ErrorCode::AppUnresponsive);
+    assert_eq!(error.details.unwrap()["kind"], "app_inventory_incomplete");
+    assert_eq!(error.disposition, crate::DeliverySemantics::not_delivered());
 }

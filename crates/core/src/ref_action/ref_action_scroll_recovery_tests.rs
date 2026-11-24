@@ -181,6 +181,30 @@ fn scroll_recovery_success_lets_the_action_proceed() {
     assert_eq!(adapter.resolve_calls.load(Ordering::SeqCst), 2);
 }
 
+/// The recovery scroll runs under the policy the request carries, never a
+/// hardcoded one. A cursor-only policy exercises the forwarding without the
+/// window raise a headed preflight needs, which this stub cannot answer.
+#[test]
+fn scroll_recovery_runs_under_the_requests_interaction_policy() {
+    let adapter = ScrollRecoveryAdapter::new(true, false);
+    let policy = crate::InteractionPolicy {
+        allow_focus_steal: false,
+        allow_cursor_move: true,
+    };
+    let mut request = ActionRequest::headless(Action::Expand);
+    request.policy = policy;
+
+    execute_entry(&adapter, &entry(), request)
+        .expect_err("a target that stays offscreen stays unactionable");
+
+    let seen = adapter
+        .scroll_policy
+        .lock()
+        .expect("the policy lock")
+        .expect("the scroll ran");
+    assert_eq!(seen, policy);
+}
+
 #[test]
 fn scroll_recovery_that_leaves_the_target_unactionable_still_fails() {
     let adapter = ScrollRecoveryAdapter::new(true, false);

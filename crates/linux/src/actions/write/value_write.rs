@@ -52,6 +52,23 @@ pub(crate) fn route(role: Option<u32>, interfaces: Option<&[String]>) -> Route {
     }
 }
 
+/// The route a write of `text` takes: a cell that advertises editable text as
+/// well as a value takes text that is not a number through its text.
+pub(crate) fn set_value_route(
+    role: Option<u32>,
+    interfaces: Option<&[String]>,
+    text: &str,
+) -> Route {
+    let route = route(role, interfaces);
+    if route == Route::Cell
+        && advertises(interfaces, EDITABLE_TEXT) == Some(true)
+        && numeric_write::plan(text, false, None).is_err()
+    {
+        return Route::Text;
+    }
+    route
+}
+
 struct LiveText<'a> {
     target: &'a Target<'a>,
 }
@@ -215,7 +232,7 @@ pub(crate) fn set_value(
 ) -> Result<ActionResult, AdapterError> {
     let view = target.view()?;
     let action = Action::SetValue(text.to_owned());
-    match route(view.role(), view.interfaces()) {
+    match set_value_route(view.role(), view.interfaces(), text) {
         Route::Unsupported => Err(unsupported("set a value")),
         Route::Numeric { spin_button } => {
             if view.state(READ_ONLY) == Some(true) {

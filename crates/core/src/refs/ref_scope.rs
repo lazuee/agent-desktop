@@ -11,8 +11,8 @@ pub struct RefScope {
     /// The identities of the ancestors that scope an element whose own proof is
     /// not unique in its window, nearest first. Each is unique inside the next,
     /// and the last is unique in the whole window.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub chain: Vec<crate::RefEntryIdentity>,
+    #[serde(default, skip_serializing_if = "crate::ScopeChain::is_empty")]
+    pub chain: crate::ScopeChain,
 }
 
 fn is_false(value: &bool) -> bool {

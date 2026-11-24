@@ -50,6 +50,7 @@ impl InteractionPolicy {
             format!("{operation} {what}, which the interaction policy does not allow"),
             self,
         )
+        .with_suggestion(crate::headed_mode_suggestion(what))
         .with_details(serde_json::json!({ "effect": effect })))
     }
 

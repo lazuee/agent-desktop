@@ -4,6 +4,7 @@ use agent_desktop_core::{
 };
 use std::time::Duration;
 
+use crate::system::escape_popup::cancel_surface;
 use crate::tree::AXElement;
 
 #[path = "key_dispatch_menu.rs"]
@@ -145,36 +146,15 @@ fn deliver_semantic_key(
     let Some(target) = semantic_key_target(pid, app, action, deadline)? else {
         return Ok(None);
     };
-    let (element, closes_surface) = match &target {
-        SemanticKeyTarget::FocusHolder(element) => (element, false),
-        SemanticKeyTarget::OpenSurface(element) => (element, true),
-    };
-    if !crate::actions::ax_helpers::try_ax_action_or_err(element, action, deadline)? {
-        return Ok(None);
+    match &target {
+        SemanticKeyTarget::FocusHolder(element) => {
+            if !crate::actions::ax_helpers::try_ax_action_or_err(element, action, deadline)? {
+                return Ok(None);
+            }
+            Ok(Some(semantic_step(action)))
+        }
+        SemanticKeyTarget::OpenSurface(element) => cancel_surface(element, deadline),
     }
-    let closed = closes_surface && surface_closed(element, deadline);
-    Ok(Some(semantic_step(action).with_verified(closed)))
-}
-
-/// A closed surface leaves the tree: a popover's element becomes invalid, and
-/// a menu's element stays readable but is no longer a child of its parent.
-fn surface_closed(surface: &AXElement, deadline: Deadline) -> bool {
-    let gone = || match crate::tree::surface_read::element(surface, "AXParent", deadline) {
-        Err(error) => error.code == ErrorCode::StaleRef,
-        Ok(None) => true,
-        Ok(Some(parent)) => crate::tree::surface_read::elements(&parent, "AXChildren", deadline)
-            .is_ok_and(|children| {
-                !children
-                    .iter()
-                    .any(|child| crate::tree::same_element(child, surface))
-            }),
-    };
-    deadline.poll_until(
-        SURFACE_CLOSE_WAIT,
-        Duration::from_millis(10),
-        gone,
-        |gone| *gone,
-    )
 }
 
 fn uses_menu_shortcut(combo: &KeyCombo, policy: InteractionPolicy) -> bool {
@@ -182,7 +162,6 @@ fn uses_menu_shortcut(combo: &KeyCombo, policy: InteractionPolicy) -> bool {
 }
 
 const CANCEL: &str = "AXCancel";
-const SURFACE_CLOSE_WAIT: Duration = Duration::from_millis(500);
 
 fn simple_key_action(combo: &KeyCombo) -> Option<&'static str> {
     if !combo.modifiers.is_empty() {
@@ -200,7 +179,11 @@ fn no_focused_element_error(policy: InteractionPolicy) -> AdapterError {
         ErrorCode::ActionFailed,
         "Application has no verified focused element for keyboard delivery",
     )
-    .with_details(serde_json::json!({ "physical_delivery_started": false }))
+    .with_details(serde_json::json!({
+        "check": "process_focus",
+        "physical_delivery_started": false,
+    }))
+    .with_disposition(DeliverySemantics::not_delivered())
     .with_suggestion(if policy.allow_focus_steal {
         "Ensure the target field has keyboard focus before retrying, or run the menu command without keys: find the item with 'snapshot --app <app> --surface menubar' and click its ref.".to_owned()
     } else {

@@ -64,7 +64,10 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # probe and the notification click target platform processes by contract.
 # whose description is "Clock": TRACKED DEFECT: English UI label; to be
 # replaced by the clock menu extra's non-localized identifier.
-ALLOWED='"(com\.apple\.(dock|MenuBarAgent|controlcenter|systemuiserver|systemevents)|org\.gnome\.(Shell|Mutter)(\.[A-Za-z.]+)?|org\.kde\.StatusNotifier(Item|Watcher))"|flag\("Terminal"\)|FRAMEWORK_ID: &str = "Chrome"|call_method\("Screenshot"|"NotificationCenter"|ShellKind::Dock => "Dock"|&\["loginwindow", "windowserver", "dock", "launchd", "finder"\]|"(csrss|wininit|winlogon|services|lsass|smss|lsaiso|dwm|explorer)\.exe"|"target": "System Events"|tell application "System Events" to tell its application process "ControlCenter"|whose description is \\?"Clock\\?"|thread::current\(\)\.name\(\) == Some\("[^"]*"\)'
+ALLOWED='"(com\.apple\.(dock|MenuBarAgent|controlcenter|systemuiserver|systemevents)|org\.gnome\.(Shell|Mutter)(\.[A-Za-z.]+)?|org\.kde\.StatusNotifier(Item|Watcher))"|flag\("Terminal"\)|FRAMEWORK_ID: &str = "Chrome"|call_method\("Screenshot"|"NotificationCenter"|ShellKind::Dock => "Dock"|&\["loginwindow", "windowserver", "dock", "launchd", "finder"\]|"(csrss|wininit|winlogon|services|lsass|smss|lsaiso|dwm|explorer)\.exe"|"target": "System Events"|tell application "System Events" to tell its application process "ControlCenter"|whose description is \\?"Clock\\?"'
+# A thread name is not an application identity, so rule 3 ignores this one comparison.
+THREAD_NAME='thread::current\(\)\.name\(\) == Some\("[^"]*"\)'
+ALLOWED="$ALLOWED|$THREAD_NAME"
 
 FIELDS='app_name|bundle_id|window_title|process_name|image_name|desktop_id|class_name|wm_class|app_id|executable|exe|image|name|app|title'
 RULE2='"[^"{}]+\.[Ee][Xx][Ee]"|"[A-Z][^"{}]*\.app"|"[A-Za-z0-9_.-]+\.desktop"|"[A-Za-z0-9]+(\.[A-Za-z0-9]+)+_[a-z0-9]{13}(![A-Za-z0-9_.]+)?"'
@@ -333,15 +336,18 @@ runtime_lines() {
         awk -f "$WORK/scan.awk"
 }
 
+# ALLOWED exempts a platform literal, never a comparison of an identity field:
+# a rule 3 line is reported even when an allowed literal shares it.
 hit_lines() {
-    local clean="$WORK/clean.txt" tags="$WORK/tags.txt"
+    local clean="$WORK/clean.txt" compared="$WORK/compared.txt" tags="$WORK/tags.txt"
     sed -E "s#${ALLOWED}#@#g" "$1" > "$clean"
+    sed -E "s#${THREAD_NAME}#@#g" "$1" > "$compared"
     {
         { grep -n -F -f "$WORK/patterns.txt" "$clean" 2>/dev/null || true; } |
             sed 's/:.*$/ rule 1: names an application/'
         { grep -nE "$RULE2" "$clean" 2>/dev/null || true; } |
             sed 's/:.*$/ rule 2: application identity/'
-        { grep -nE "$RULE3" "$clean" 2>/dev/null || true; } |
+        { grep -nE "$RULE3" "$compared" 2>/dev/null || true; } |
             sed 's/:.*$/ rule 3: identity field comparison/'
     } > "$tags"
     awk '

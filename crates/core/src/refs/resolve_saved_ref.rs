@@ -1,6 +1,6 @@
 use crate::{
     AdapterError, AppError, AppInfo, Deadline, IdentityMatch, PlatformAdapter, RefEntry,
-    WindowInfo,
+    SnapshotSurface, WindowInfo,
     adapter::{NativeHandle, TreeOptions},
     locator::live_locator::{ObservationRequest, ObservationRoot, ObservedTree},
     refs::ref_full_predicate::FullPredicate,
@@ -90,7 +90,13 @@ pub(crate) fn observe_saved_ref(
     };
     let mut request = whole_window_request(&base, deadline)?;
     request.observation_mode.identity_only = identity_only;
-    let observed = observe_window(adapter, &request, &window, lease)?;
+    let observed = observe_window(
+        adapter,
+        &request,
+        &window,
+        lease,
+        entry.source.source_window_id.is_some(),
+    )?;
     let index = saved_ref_node(entry, token, &observed)?;
     let node = observed
         .nodes
@@ -136,7 +142,7 @@ pub(crate) fn confirm_landed(
     let request = ObservationRequest::snapshot(&options, deadline).validate()?;
     let observed =
         crate::tree::renderer_accessibility::observe_tree(adapter, root, &request, lease)
-            .map_err(adapter_error)?;
+            .map_err(AppError::into_adapter_error)?;
     let landed = observed
         .roots
         .first()
@@ -161,7 +167,18 @@ pub(crate) fn recorded_window(
 ) -> Result<WindowInfo, AdapterError> {
     if entry.source.is_process_owned() {
         return crate::system::app_lookup::live_process_owner(adapter, entry, deadline)
-            .map_err(adapter_error);
+            .map_err(AppError::into_adapter_error);
+    }
+    if let Some(window_id) = entry.source.source_window_id.as_deref()
+        && let Some(process) = entry.process.identity()
+        && let Some(window) = adapter.recorded_surface_window(
+            process,
+            window_id,
+            entry.source.source_surface,
+            deadline,
+        )?
+    {
+        return Ok(window);
     }
     let resolved = crate::snapshot::resolve_window_for_surface(
         adapter,
@@ -171,10 +188,11 @@ pub(crate) fn recorded_window(
         deadline,
     );
     let mut failure = None;
-    match resolved {
+    match resolved.map_err(AppError::into_adapter_error) {
         Ok(window) if belongs_to_entry(&window, entry) => return Ok(window),
         Ok(_) => {}
-        Err(error) => failure = Some(adapter_error(error)),
+        Err(error) if error.code == crate::ErrorCode::WindowNotFound => {}
+        Err(error) => failure = Some(error),
     }
     if entry.source.source_window_id.is_some() {
         return Err(failure.unwrap_or_else(gone));
@@ -218,7 +236,8 @@ fn belongs_to_entry(window: &WindowInfo, entry: &RefEntry) -> bool {
 /// uses: the whole window at the deepest limit a walk supports, so a capture
 /// proof and a later resolution count the same evidence. `base` supplies the
 /// surface and the renderer-accessibility hint; its depth and presentation
-/// settings are ignored.
+/// settings are ignored. `window` is the owner the capture resolved, so a
+/// surface presented by that window is read at it.
 pub(crate) fn observe_whole_window(
     adapter: &dyn PlatformAdapter,
     base: &TreeOptions,
@@ -230,6 +249,7 @@ pub(crate) fn observe_whole_window(
         &whole_window_request(base, deadline)?,
         window,
         None,
+        true,
     )
 }
 
@@ -252,6 +272,7 @@ fn observe_window(
     request: &ObservationRequest,
     window: &WindowInfo,
     lease: Option<&crate::InteractionLease>,
+    surface_window: bool,
 ) -> Result<ObservedTree, AdapterError> {
     let process_instance = window.process_instance.clone();
     let app = AppInfo {
@@ -262,17 +283,10 @@ fn observe_window(
         bundle_id: None,
         presentation: None,
     };
-    let root = if adapter.is_application_surface(request.surface) {
-        ObservationRoot::Application {
-            app: &app,
-            surface: request.surface,
-        }
-    } else {
-        ObservationRoot::Window(window)
-    };
+    let root = observation_root(adapter, request.surface, &app, window, surface_window);
     let mut observed =
         crate::tree::renderer_accessibility::observe_tree(adapter, root, request, lease)
-            .map_err(adapter_error)?;
+            .map_err(AppError::into_adapter_error)?;
     if let crate::locator::live_locator::ObservationSource::Window {
         renderer_accessibility_forced,
         ..
@@ -281,6 +295,27 @@ fn observe_window(
         *renderer_accessibility_forced = request.observation_mode.force_renderer_accessibility;
     }
     Ok(observed)
+}
+
+/// The root one observation of `surface` starts at. `surface_window` says the
+/// window is the one the surface is presented by - the id a ref recorded, or the
+/// owner a capture resolved - so the read lands on that window instead of
+/// re-resolving the surface from the process, which cannot name it while several
+/// of that kind are open. Every other application-owned surface has no window of
+/// its own and starts at the application root.
+fn observation_root<'a>(
+    adapter: &dyn PlatformAdapter,
+    surface: SnapshotSurface,
+    app: &'a AppInfo,
+    window: &'a WindowInfo,
+    surface_window: bool,
+) -> ObservationRoot<'a> {
+    let presented_by_window = surface_window && !window.is_process_owner();
+    if adapter.is_application_surface(surface) && !presented_by_window {
+        ObservationRoot::Application { app, surface }
+    } else {
+        ObservationRoot::Window(window)
+    }
 }
 
 fn saved_ref_node(
@@ -309,13 +344,6 @@ fn unique_live_match(entry: &RefEntry, observed: &ObservedTree) -> Result<usize,
         .copied();
     match_in_scope(observed, scope, &FullPredicate::of_entry(entry))
         .map_err(|miss| miss.into_error(entry))
-}
-
-fn adapter_error(error: AppError) -> AdapterError {
-    match error {
-        AppError::Adapter(error) => error,
-        other => AdapterError::internal(other.to_string()),
-    }
 }
 
 #[cfg(test)]

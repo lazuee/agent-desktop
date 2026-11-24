@@ -6,6 +6,13 @@ const USER: Foreground = Foreground {
 };
 const LAUNCHED: u32 = 200;
 
+fn launched_window() -> Foreground {
+    Foreground {
+        handle: 20,
+        pid: LAUNCHED,
+    }
+}
+
 fn row(pid: u32, parent: u32) -> ProcessRow {
     ProcessRow {
         pid: ProcessId::from(pid),
@@ -16,11 +23,10 @@ fn row(pid: u32, parent: u32) -> ProcessRow {
 
 #[test]
 fn a_foreground_window_of_the_launched_process_is_stolen_focus() {
-    let now = Foreground {
-        handle: 20,
-        pid: LAUNCHED,
-    };
-    assert_eq!(judge(USER, Some(now), |pid| pid == LAUNCHED), Look::Stolen);
+    assert_eq!(
+        judge(USER, Some(launched_window()), |pid| pid == LAUNCHED),
+        Look::Stolen
+    );
 }
 
 #[test]
@@ -53,7 +59,73 @@ fn a_window_of_an_unrelated_process_is_never_touched() {
     };
     let owns = |pid| started_by(LAUNCHED, pid, &rows, |_| true);
     assert_eq!(judge(USER, Some(unrelated), owns), Look::Elsewhere);
-    assert_eq!(judge(USER, None, owns), Look::Elsewhere);
+}
+
+#[test]
+fn an_unreadable_foreground_is_not_another_application_taking_it() {
+    let rows = [row(300, LAUNCHED)];
+    let owns = |pid| started_by(LAUNCHED, pid, &rows, |_| true);
+    assert_eq!(judge(USER, None, owns), Look::Unreadable);
+}
+
+#[test]
+fn an_unreadable_foreground_between_the_prior_and_the_launch_still_restores() {
+    let reads = [Some(USER), None, Some(launched_window())];
+    let looks = reads.len();
+    let mut remaining = reads.into_iter();
+    let mut asked = 0;
+    let verdict = watch_foreground(
+        USER,
+        || remaining.next().unwrap_or(Some(USER)),
+        || {
+            asked += 1;
+            asked >= looks
+        },
+        |pid| pid == LAUNCHED,
+    );
+    assert_eq!(
+        verdict,
+        Look::Stolen,
+        "a window change that leaves the foreground unreadable must not end the watch"
+    );
+}
+
+#[test]
+fn a_readable_foreign_foreground_ends_the_watch() {
+    let unrelated = Foreground {
+        handle: 30,
+        pid: 500,
+    };
+    assert_eq!(
+        watch_foreground(USER, || Some(unrelated), || false, |_| false),
+        Look::Elsewhere
+    );
+}
+
+#[test]
+fn an_observation_with_no_window_yet_keeps_a_running_launch_watched() {
+    let progress = Progress::new();
+    progress.finished_without_window(ProcessId::from(std::process::id()));
+    assert!(
+        !progress.hopeless(),
+        "a process that is still running can still open the window that takes the foreground"
+    );
+}
+
+#[test]
+fn an_observation_with_no_window_ends_the_watch_once_the_launch_exited() {
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", "exit"])
+        .spawn()
+        .expect("cmd.exe exits at once");
+    let exited = ProcessId::from(child.id());
+    let _ = child.wait();
+    let progress = Progress::new();
+    progress.finished_without_window(exited);
+    assert!(
+        progress.hopeless(),
+        "a launch whose processes are gone cannot take the foreground"
+    );
 }
 
 #[test]

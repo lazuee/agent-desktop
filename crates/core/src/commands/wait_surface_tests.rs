@@ -73,4 +73,9 @@ fn a_listed_surface_matches_its_kind_and_a_context_menu_is_a_menu() {
         Some(SnapshotSurface::Menu)
     ));
     assert!(is_kind(&listed("alert"), None));
+    assert!(is_kind(&listed("context_menu"), None));
+    assert!(
+        !is_kind(&listed("window"), None),
+        "any must not match a plain window, which Linux and Windows list for every window"
+    );
 }

@@ -112,34 +112,45 @@ pub(crate) fn clap_error_summary(message: &str) -> String {
 }
 
 /// Builds the `suggestion` for a clap parse failure: every `tip:` line clap
-/// printed, its `Usage:` line, then a pointer at the subcommand's `--help`.
-/// `command_name` is `clap_command_name`'s result; `UNKNOWN_COMMAND_NAME`
-/// means no subcommand was identified, so the `--help` sentence is dropped.
-/// `None` when clap printed neither a tip nor a usage line.
+/// printed, its `Usage:` line, then a pointer at the failing command's
+/// `--help`. The command path comes from the usage line, which names a nested
+/// command in full (`session start`); without one it is `command_name`, and
+/// `UNKNOWN_COMMAND_NAME` there means no command was identified, so the
+/// pointer is dropped. `None` when there is nothing to say.
 pub(crate) fn clap_error_suggestion(message: &str, command_name: &str) -> Option<String> {
-    let mut tips = Vec::new();
+    let mut parts = Vec::new();
     let mut usage = None;
     for line in message.lines() {
         let line = line.trim();
         if line.starts_with("tip:") {
-            tips.push(line.to_owned());
+            parts.push(line.to_owned());
         } else if usage.is_none() && line.starts_with("Usage:") {
             usage = Some(line.to_owned());
         }
     }
-    if tips.is_empty() && usage.is_none() {
-        return None;
-    }
-    let mut parts = tips;
-    if let Some(usage) = usage {
-        parts.push(usage);
-    }
-    if command_name != UNKNOWN_COMMAND_NAME {
+    let help_path = usage
+        .as_deref()
+        .and_then(usage_command_path)
+        .or_else(|| (command_name != UNKNOWN_COMMAND_NAME).then(|| command_name.to_owned()));
+    parts.extend(usage);
+    if let Some(path) = help_path {
         parts.push(format!(
-            "Run `agent-desktop {command_name} --help` for every argument."
+            "Run `agent-desktop {path} --help` for every argument."
         ));
     }
-    Some(parts.join("\n"))
+    (!parts.is_empty()).then(|| parts.join("\n"))
+}
+
+/// The command path of a clap `Usage:` line: the words after the binary name
+/// up to the first option, argument or placeholder.
+fn usage_command_path(usage: &str) -> Option<String> {
+    let path = usage
+        .split_whitespace()
+        .skip(2)
+        .take_while(|word| !word.starts_with(['[', '<', '-']))
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!path.is_empty()).then_some(path)
 }
 
 #[cfg(test)]

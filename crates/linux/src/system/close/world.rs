@@ -22,7 +22,6 @@ use crate::system::{
 };
 
 const LATE_READ_MS: u64 = 300;
-const NESTED_LOOK_MS: u64 = 300;
 const DIALOG_SETTLE: Duration = Duration::from_millis(300);
 
 /// What the close flow touches outside itself. The live implementation reads
@@ -94,7 +93,7 @@ impl World for Live<'_> {
     }
 
     fn nested_dialogs(&self) -> Result<NestedDialogs, AdapterError> {
-        let look = self.deadline.capped(Duration::from_millis(NESTED_LOOK_MS));
+        let look = self.deadline.capped(self.deadline.remaining() / 2);
         let read = surfaces::nested_dialog_titles(self.bus, self.pid, look);
         self.deadline.ensure_remaining()?;
         Ok(read.unwrap_or(NestedDialogs {
@@ -136,6 +135,6 @@ impl World for Live<'_> {
             );
             !open || dialog_seen.get_or_insert_with(Instant::now).elapsed() < DIALOG_SETTLE
         };
-        focus_return::give_back(prior, |owner| owner == pid, keeps_watching, self.deadline)
+        focus_return::give_back_owned(prior, |owner| owner == pid, keeps_watching, self.deadline)
     }
 }

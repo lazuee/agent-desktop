@@ -311,11 +311,11 @@ impl SystemOps for FocusFailureAdapter {
         &self,
         _window: &crate::WindowInfo,
         _lease: &crate::InteractionLease,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
         self.focus_calls.fetch_add(1, Ordering::SeqCst);
         match &self.focus_error {
             Some(error) => Err(error.clone()),
-            None => Ok(()),
+            None => Ok(crate::DeliverySemantics::delivered_unverified()),
         }
     }
 }

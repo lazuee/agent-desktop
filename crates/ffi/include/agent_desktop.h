@@ -26,9 +26,9 @@
  *  4. Act via ad_execute_by_ref(a, "@s8f3k2p9:e5", &action, policy, &out).
  *     Build an AdAction by zero-initialising it and setting its kind field to
  *     an AD_ACTION_KIND_* constant plus any kind-specific fields (e.g. .text
- *     for AD_ACTION_KIND_TYPE_TEXT).  policy=0 (Headless) keeps each action's
- *     built-in base behaviour; pass 2 (Headed) to additionally allow
- *     cursor/focus fallbacks.  ref_id must be non-null (null returns
+ *     for AD_ACTION_KIND_TYPE_TEXT).  policy=0 (Headless) permits neither
+ *     focus nor cursor movement; pass 2 (Headed) to allow cursor/focus
+ *     fallbacks.  ref_id must be non-null (null returns
  *     ErrInvalidArgs immediately).
  *
  *  5. Ownership: every non-null *out string must be freed with ad_free_string().
@@ -1085,11 +1085,10 @@ AdResult ad_execute_action(const struct AdAdapter *adapter,
 /**
  * Low-level native-handle action with explicit interaction policy. Dispatches
  * directly to the platform adapter without strict ref re-identification or
- * actionability preflight. The `policy` discriminant is applied verbatim — no
- * base-policy elevation is performed. This is a raw escape hatch for callers
- * that already hold a live native handle. Callers wanting CLI-semantics parity
- * (RefStore load → strict resolution → preflight → dispatch with base-policy
- * join) should use `ad_execute_by_ref` instead.
+ * actionability preflight. The `policy` discriminant is applied verbatim.
+ * This is a raw escape hatch for callers that already hold a live native
+ * handle. Callers wanting CLI-semantics parity (RefStore load → strict
+ * resolution → preflight → dispatch) should use `ad_execute_by_ref` instead.
  *
  * # Safety
  *

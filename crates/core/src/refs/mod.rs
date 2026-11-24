@@ -248,7 +248,6 @@ fn base36(mut value: u64) -> String {
         let pad = MIN_LEN - digits;
         i -= pad;
     }
-
     String::from_utf8_lossy(&buf[i..]).into_owned()
 }
 
@@ -389,6 +388,7 @@ pub(crate) mod resolve_attempt_outcome;
 pub mod resolve_errors;
 pub mod resolve_retry;
 pub mod resolve_saved_ref;
+pub(crate) mod scope_chain;
 #[cfg(test)]
 #[path = "refs_serde_tests.rs"]
 mod serde_tests;

@@ -84,7 +84,7 @@ impl SystemOps for MinimizedWindowAdapter {
         &self,
         _window: &crate::WindowInfo,
         _lease: &crate::InteractionLease,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
         if self.keeps_it_hidden {
             return Err(AdapterError::new(
                 ErrorCode::ActionNotSupported,
@@ -93,7 +93,7 @@ impl SystemOps for MinimizedWindowAdapter {
             .with_disposition(DeliverySemantics::delivered_unverified()));
         }
         self.restored.store(true, Ordering::SeqCst);
-        Ok(())
+        Ok(crate::DeliverySemantics::delivered_unverified())
     }
 }
 

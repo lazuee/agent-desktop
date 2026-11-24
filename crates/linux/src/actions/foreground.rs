@@ -109,7 +109,7 @@ fn takes_foreground(
     if toolkit == ToolkitKind::Gtk3 {
         return Ok(None);
     }
-    if opens_dialog(action, view.name_read()) {
+    if opens_dialog(action, view.resolved_name()) {
         return Ok(Some("opens_dialog"));
     }
     if opens_popup_without_selection(view) {

@@ -157,7 +157,7 @@ fn entry() -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }

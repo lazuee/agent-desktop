@@ -5,6 +5,7 @@ pub(crate) mod cocoa_runtime;
 pub(crate) mod cursor_overlay;
 pub(crate) mod display;
 pub(crate) mod display_work_area;
+pub(crate) mod escape_popup;
 pub(crate) mod focus;
 pub(crate) mod focus_bridge;
 pub(crate) mod key_dispatch;

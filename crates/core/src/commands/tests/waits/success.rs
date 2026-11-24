@@ -177,6 +177,30 @@ fn a_surface_wait_that_never_read_the_surfaces_reports_the_error_and_no_observat
 }
 
 #[test]
+fn a_surface_wait_that_saw_no_such_surface_does_not_call_the_app_busy() {
+    let stub = Stub {
+        supported_surfaces: vec![crate::SnapshotSurface::Menu],
+        ..Default::default()
+    };
+
+    let error = payload(run(
+        &stub,
+        mode!(
+            surface,
+            SurfaceWait::Open(Some(crate::SnapshotSurface::Menu))
+        ),
+        Some("TextEdit"),
+        250,
+    ));
+
+    assert_eq!(error["code"], json!("TIMEOUT"));
+    assert_eq!(error["details"]["last_observed"], json!([]));
+    let suggestion = error["suggestion"].as_str().unwrap_or_default();
+    assert!(!suggestion.contains("busy"), "{suggestion}");
+    assert!(suggestion.contains("last_observed"), "{suggestion}");
+}
+
+#[test]
 fn a_surface_wait_for_a_kind_the_platform_cannot_show_is_refused_at_once() {
     let started = std::time::Instant::now();
     let error = run(

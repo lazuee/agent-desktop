@@ -21,7 +21,7 @@ use crate::tree::menu::observe_menu::{rooted, scan_walk_structure};
 use crate::tree::properties::liveness::Liveness;
 use crate::tree::properties::node_read::{NAME, get_one, string_value};
 use crate::tree::properties::read_purpose::ReadPurpose;
-use crate::tree::vocabulary::role_numbers::{COMBO_BOX, MENU, POPUP_MENU};
+use crate::tree::vocabulary::role_numbers::{COMBO_BOX, MENU, POPUP_MENU, is_bulk_container};
 use crate::tree::vocabulary::state_bits::{EXPANDED, HAS_POPUP, SELECTED, SHOWING, StateBits};
 use crate::tree::walk::walker_expand::read_observed;
 use crate::tree::{
@@ -43,12 +43,24 @@ fn bits(node: &WalkedNode<ObservedRead>) -> Option<StateBits<'_>> {
     bits_of(&node.payload)
 }
 
-fn showing_popups(node: &WalkedNode<ObservedRead>) -> u32 {
-    let own = matches!(
-        node.payload.node.traits.role.present().copied(),
-        Some(MENU | POPUP_MENU)
-    ) && bits(node).is_some_and(|bits| bits.has(SHOWING));
-    u32::from(own) + node.children.iter().map(showing_popups).sum::<u32>()
+/// The popup menus that show in a subtree, or `None` when a menu's states
+/// could not be read or the walk stopped short of a node's children: an
+/// uncounted popup would make a later whole read look like a popup the action
+/// opened. A list, table or tree cut at its row limit hides only rows.
+fn showing_popups(node: &WalkedNode<ObservedRead>) -> Option<u32> {
+    let role = node.payload.node.traits.role.present().copied();
+    if node.truncated && !is_bulk_container(role) {
+        return None;
+    }
+    let own = match role {
+        Some(MENU | POPUP_MENU) => u32::from(bits(node)?.has(SHOWING)),
+        _ => 0,
+    };
+    node.children
+        .iter()
+        .map(showing_popups)
+        .sum::<Option<u32>>()
+        .map(|below| own + below)
 }
 
 /// Whether a target can own a popup below it: a combo box, or an element that
@@ -62,7 +74,7 @@ pub(crate) fn may_own_popup(role: Option<u32>, bits: &StateBits<'_>) -> bool {
 /// subtree, or one when the target itself reports `EXPANDED`.
 pub(crate) fn surfaces_of(target: &WalkedNode<ObservedRead>) -> Option<u32> {
     let bits = bits(target)?;
-    let shown = showing_popups(target);
+    let shown = showing_popups(target)?;
     Some(if shown == 0 && bits.has(EXPANDED) {
         1
     } else {

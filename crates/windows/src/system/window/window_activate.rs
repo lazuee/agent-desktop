@@ -42,7 +42,10 @@ const INTER_ATTEMPT_DELAY: Duration = Duration::from_millis(25);
 /// are attempt-and-verify (A21-7); budget exhaustion on a strictly-higher
 /// integrity target is activation-worded `PERM_DENIED`, otherwise
 /// `ACTION_FAILED` with `physical_delivery_started: false`.
-pub(crate) fn focus_window(win: &WindowInfo, lease: &InteractionLease) -> Result<(), AdapterError> {
+pub(crate) fn focus_window(
+    win: &WindowInfo,
+    lease: &InteractionLease,
+) -> Result<DeliverySemantics, AdapterError> {
     lease
         .deadline()
         .ensure_remaining()
@@ -62,9 +65,13 @@ pub(crate) fn focus_window(win: &WindowInfo, lease: &InteractionLease) -> Result
     };
     evidence.verify_stored().map_err(before_activation)?;
     ensure_window_is_pumping(handle).map_err(before_activation)?;
-    restore_if_iconic(handle, &evidence).map_err(before_activation)?;
+    let restored = restore_if_iconic(handle, &evidence).map_err(before_activation)?;
     if is_owned_foreground(handle, &evidence) {
-        return Ok(());
+        return Ok(if restored {
+            DeliverySemantics::delivered_unverified()
+        } else {
+            DeliverySemantics::not_delivered()
+        });
     }
     let strictly_higher = activation_target_is_strictly_higher(win.pid);
     raise_with_budget(handle, &evidence, lease, strictly_higher)
@@ -117,7 +124,7 @@ fn raise_with_budget(
     evidence: &WindowIdentityEvidence<'_>,
     lease: &InteractionLease,
     strictly_higher: bool,
-) -> Result<(), AdapterError> {
+) -> Result<DeliverySemantics, AdapterError> {
     for attempt in 0..FOCUS_STEAL_BUDGET {
         if attempt == 0 {
             lease
@@ -137,7 +144,7 @@ fn raise_with_budget(
         }
         bring_to_foreground(handle, evidence)?;
         if is_owned_foreground(handle, evidence) {
-            return Ok(());
+            return Ok(DeliverySemantics::delivered_unverified());
         }
     }
     Err(budget_exhausted(strictly_higher))
@@ -202,11 +209,11 @@ pub(crate) fn is_owned_foreground(
 fn restore_if_iconic(
     handle: super::window_enum::WindowHandle,
     evidence: &WindowIdentityEvidence<'_>,
-) -> Result<(), AdapterError> {
+) -> Result<bool, AdapterError> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, SW_RESTORE, ShowWindowAsync};
     unsafe {
         if IsIconic(handle) == 0 {
-            return Ok(());
+            return Ok(false);
         }
         if !owned_for_write(evidence)? {
             return Err(recycled_before_foreground());
@@ -217,15 +224,15 @@ fn restore_if_iconic(
             )));
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(not(target_os = "windows"))]
 fn restore_if_iconic(
     _handle: super::window_enum::WindowHandle,
     _evidence: &WindowIdentityEvidence<'_>,
-) -> Result<(), AdapterError> {
-    Ok(())
+) -> Result<bool, AdapterError> {
+    Ok(false)
 }
 
 #[cfg(target_os = "windows")]

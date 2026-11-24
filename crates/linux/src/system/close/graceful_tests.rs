@@ -210,6 +210,24 @@ fn a_stale_close_target_refuses_further_sends_and_preserves_prior_delivery() {
 }
 
 #[test]
+fn a_stale_window_after_a_delivered_close_still_watches_the_focus() {
+    let mut world = Fake::new(Liveness::Alive);
+    world.windows = ControlRead::Ready(vec![window(1), window(2)]);
+    let mut closes = world.closes.borrow_mut();
+    closes.push(Ok(()));
+    closes.push(Err(ControlError::StaleWindow));
+    drop(closes);
+    let error = close(&world, &request()).expect_err("the owner changed");
+    assert_eq!(error.code, ErrorCode::StaleRef);
+    assert_eq!(error.disposition, DeliverySemantics::delivered_unverified());
+    assert_eq!(
+        world.count("watch_focus"),
+        1,
+        "the delivered close can raise a prompt that takes the focus before the command returns"
+    );
+}
+
+#[test]
 fn a_deadline_in_the_middle_of_the_fan_out_is_a_timeout_not_a_failed_send() {
     let mut world = Fake::new(Liveness::Alive);
     world.windows = ControlRead::Ready(vec![window(1), window(2), window(3)]);

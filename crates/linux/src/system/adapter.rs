@@ -2,11 +2,12 @@ use agent_desktop_core::system::launch_options::LaunchOptions;
 use agent_desktop_core::system::launch_result::LaunchResult;
 use agent_desktop_core::system::process_state::ProcessState;
 use agent_desktop_core::{
-    ActionResult, AdapterError, AdapterSession, AppInfo, Deadline, DismissAllNotificationsRequest,
-    DismissNotificationRequest, DisplayInfo, ImageBuffer, InteractionLease, InteractionPolicy,
-    KeyCombo, NotificationActionRequest, NotificationFilter, NotificationInfo, OperationReport,
-    PermissionReport, ProcessIdentity, ScreenshotTarget, SessionAffinity, SignalBaseline,
-    SignalFilter, SnapshotSurface, SurfaceOpening, SystemOps, WindowInfo, WindowOp,
+    ActionResult, AdapterError, AdapterSession, AppInfo, Deadline, DeliverySemantics,
+    DismissAllNotificationsRequest, DismissNotificationRequest, DisplayInfo, ImageBuffer,
+    InteractionLease, InteractionPolicy, KeyCombo, NotificationActionRequest, NotificationFilter,
+    NotificationInfo, OperationReport, PermissionReport, ProcessIdentity, ScreenshotTarget,
+    SessionAffinity, SignalBaseline, SignalFilter, SnapshotSurface, SurfaceOpening, SystemOps,
+    WindowInfo, WindowOp,
 };
 
 use crate::adapter::LinuxAdapter;
@@ -71,8 +72,18 @@ impl SystemOps for LinuxAdapter {
         crate::system::list_displays(deadline)
     }
 
-    fn focus_window(&self, win: &WindowInfo, lease: &InteractionLease) -> Result<(), AdapterError> {
-        crate::system::focus::focus_window::focus_window(self.bus(), win, lease).map(|_| ())
+    fn focus_window(
+        &self,
+        win: &WindowInfo,
+        lease: &InteractionLease,
+    ) -> Result<DeliverySemantics, AdapterError> {
+        crate::system::focus::focus_window::focus_window(self.bus(), win, lease).map(|activation| {
+            if activation.dispatched() {
+                DeliverySemantics::delivered_unverified()
+            } else {
+                DeliverySemantics::not_delivered()
+            }
+        })
     }
 
     fn close_app(
@@ -193,33 +204,24 @@ impl SystemOps for LinuxAdapter {
     }
 
     fn supported_surfaces(&self) -> Vec<SnapshotSurface> {
-        let Ok(deadline) = Deadline::after(SURFACE_PROBE_MS) else {
-            return Vec::new();
-        };
-        if !permissions::accessibility_answers(self.bus(), deadline) {
-            return Vec::new();
+        let mut surfaces = answering_app_surfaces(self.bus());
+        if !surfaces.is_empty() {
+            surfaces.extend(shell::supported(self.bus()));
         }
-        let mut surfaces = vec![
-            SnapshotSurface::Window,
-            SnapshotSurface::Sheet,
-            SnapshotSurface::Alert,
-        ];
-        surfaces.extend(menu_surface::supported());
-        surfaces.extend(shell::supported(self.bus()));
         surfaces
     }
 
+    /// An application surface needs no probe. A kind that no shell surface
+    /// can be is refused without the shell probe, which takes up to its
+    /// budget on a session whose shell tree answers slowly.
     fn check_surface_support(&self, requested: SnapshotSurface) -> Result<(), AdapterError> {
-        if matches!(
-            requested,
-            SnapshotSurface::Window
-                | SnapshotSurface::Sheet
-                | SnapshotSurface::Alert
-                | SnapshotSurface::Menu
-        ) {
+        if app_surfaces().contains(&requested) {
             return Ok(());
         }
-        let supported = self.supported_surfaces();
+        let supported = match shell::kinds::kind_of(requested) {
+            Some(_) => self.supported_surfaces(),
+            None => answering_app_surfaces(self.bus()),
+        };
         if supported.contains(&requested) {
             return Ok(());
         }
@@ -280,4 +282,24 @@ impl SystemOps for LinuxAdapter {
     ) -> Result<SurfaceOpening, AdapterError> {
         shell::open_surface(self.bus(), surface, policy, lease)
     }
+}
+
+/// The application surfaces, or none when the session's accessibility bus
+/// does not answer.
+fn answering_app_surfaces(bus: &crate::system::SharedBus) -> Vec<SnapshotSurface> {
+    match Deadline::after(SURFACE_PROBE_MS) {
+        Ok(deadline) if permissions::accessibility_answers(bus, deadline) => app_surfaces(),
+        _ => Vec::new(),
+    }
+}
+
+/// The surfaces of an application window that every session reads.
+fn app_surfaces() -> Vec<SnapshotSurface> {
+    let mut surfaces = vec![
+        SnapshotSurface::Window,
+        SnapshotSurface::Sheet,
+        SnapshotSurface::Alert,
+    ];
+    surfaces.extend(menu_surface::supported());
+    surfaces
 }

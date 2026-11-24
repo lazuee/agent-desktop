@@ -36,7 +36,7 @@ pub(super) fn entry(role: &str, name: Option<&str>) -> RefEntry {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }
@@ -275,7 +275,7 @@ fn test_save_load_roundtrip_with_home_override() {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     });
     map.save().expect("save should succeed under HomeGuard");

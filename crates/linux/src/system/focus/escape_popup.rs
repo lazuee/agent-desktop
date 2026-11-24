@@ -2,13 +2,11 @@
 //!
 //! The key route sends Escape only to the active window, and core asks the
 //! adapter to close the open transient surface when that key was refused for
-//! focus. A popup that the application opened stays open in the background on
-//! some toolkits. The popup has an owner: a combo box, or a button that has a
-//! popup. The owner's own action toggles the popup, so the action is sent
-//! only when a read shows the popup open, and the result is verified by
-//! reading it gone. The owner's reply is the answer, so a rejected action
-//! delivers nothing and an owner that does not answer leaves the delivery
-//! uncertain.
+//! focus. Web documents are excluded, and a candidate must show an open popup
+//! menu child and advertise a dismissal verb (or GTK 3 combo box `Press`,
+//! L4-4) so Escape never activates a button's primary handler. The owner's
+//! reply is the answer, so a rejected action delivers nothing and an owner
+//! that does not answer leaves the delivery uncertain.
 
 use std::time::Duration;
 
@@ -17,19 +15,19 @@ use agent_desktop_core::{
     InteractionPolicy, KeyCombo, ProcessIdentity, StepMechanism, WindowInfo,
 };
 
-use crate::actions::action_call::do_action;
+use crate::actions::action_call::{do_action, resolve_verb};
 use crate::actions::chain::run_semantic_chain;
 use crate::actions::context::Target;
 use crate::actions::write::mutation::WriteReply;
-use crate::system::SharedBus;
 use crate::system::window::window_id;
 use crate::system::window::window_ops::windows_of_process;
-use crate::tree::capabilities::action_names::click_verbs;
+use crate::system::{REGISTRY_ROOT_PATH, SharedBus, within};
 use crate::tree::menu::observe_menu::{rooted, scan_walk_structure};
+use crate::tree::properties::toolkit_trust::{ToolkitKind, kind, read_toolkit};
 use crate::tree::vocabulary::role_numbers::{
-    COMBO_BOX, MENU, POPUP_MENU, PUSH_BUTTON, PUSH_BUTTON_MENU, TOGGLE_BUTTON,
+    COMBO_BOX, MENU, POPUP_MENU, PUSH_BUTTON, PUSH_BUTTON_MENU, TOGGLE_BUTTON, is_web_document,
 };
-use crate::tree::vocabulary::state_bits::{EXPANDED, HAS_POPUP, SHOWING, StateBits};
+use crate::tree::vocabulary::state_bits::{HAS_POPUP, SHOWING, StateBits};
 use crate::tree::{AtspiElement, ObservedRead, WalkedNode};
 
 const SCAN_NODES: usize = 600;
@@ -39,6 +37,8 @@ const CLOSE_SETTLE: Duration = Duration::from_millis(1000);
 const CLOSE_STEP: Duration = Duration::from_millis(50);
 const SUGGESTION: &str = "Refresh the snapshot and check whether the popup is still open.";
 const CLOSE_LABEL: &str = "Action.DoAction";
+const DISMISS_VERBS: [&str; 3] = ["collapse", "cancel", "close"];
+const GTK3_COMBO_DISMISS_VERBS: [&str; 4] = ["collapse", "cancel", "close", "press"];
 
 fn bits(node: &WalkedNode<ObservedRead>) -> Option<StateBits<'_>> {
     node.payload
@@ -54,16 +54,21 @@ fn role(node: &WalkedNode<ObservedRead>) -> Option<u32> {
 }
 
 fn showing_popup(node: &WalkedNode<ObservedRead>) -> bool {
-    matches!(role(node), Some(MENU | POPUP_MENU))
+    !node.in_web_document
+        && !is_web_document(role(node))
+        && matches!(role(node), Some(MENU | POPUP_MENU))
         && bits(node).is_some_and(|bits| bits.has(SHOWING))
 }
 
-/// Whether the node owns a popup and the popup is open now. The owner roles
-/// are the ones whose expansion is a popup: a combo box, and a button that
-/// has the popup state. An owner is open when it reports `EXPANDED` or when a
-/// popup menu below it shows. A tree row, an expander or a table cell is
-/// never an owner: Escape does not collapse a tree.
+/// Whether a native node owns a popup that is visibly open now: a combo box,
+/// or a button with `HAS_POPUP`, that has a showing `MENU` or `POPUP_MENU`
+/// child. Web documents are excluded, and `EXPANDED` alone never qualifies an
+/// owner. A tree row, an expander or a table cell is never an owner: Escape
+/// does not collapse a tree.
 pub(super) fn is_open_owner(node: &WalkedNode<ObservedRead>) -> bool {
+    if node.in_web_document || is_web_document(role(node)) {
+        return false;
+    }
     let Some(bits) = bits(node) else {
         return false;
     };
@@ -72,14 +77,28 @@ pub(super) fn is_open_owner(node: &WalkedNode<ObservedRead>) -> bool {
         Some(PUSH_BUTTON | PUSH_BUTTON_MENU | TOGGLE_BUTTON) => bits.has(HAS_POPUP),
         _ => false,
     };
-    owner && (bits.has(EXPANDED) || node.children.iter().any(showing_popup))
+    owner && node.children.iter().any(showing_popup)
 }
 
-fn deepest_open_owner<'a>(
+/// The dismissal verbs Escape may invoke on an open popup owner. Generic
+/// click/activate verbs are never used, and `press` is allowed only for a
+/// native GTK 3 combo box (L4-4), whose `Press` action pops down its showing
+/// menu child rather than firing a button's primary handler.
+pub(super) fn close_verbs(role: Option<u32>, toolkit: ToolkitKind) -> &'static [&'static str] {
+    match (role, toolkit) {
+        (Some(COMBO_BOX), ToolkitKind::Gtk3) => &GTK3_COMBO_DISMISS_VERBS,
+        _ => &DISMISS_VERBS,
+    }
+}
+
+pub(super) fn deepest_open_owner<'a>(
     node: &'a WalkedNode<ObservedRead>,
     depth: usize,
     best: &mut Option<(usize, &'a WalkedNode<ObservedRead>)>,
 ) {
+    if node.in_web_document || is_web_document(role(node)) {
+        return;
+    }
     if is_open_owner(node) && best.is_none_or(|(deepest, _)| depth > deepest) {
         *best = Some((depth, node));
     }
@@ -106,6 +125,17 @@ fn frames_of(
     Ok(frames)
 }
 
+fn owner_toolkit(bus: &SharedBus, owner: &AtspiElement, deadline: Deadline) -> ToolkitKind {
+    let Ok(connection) = bus.get(deadline) else {
+        return ToolkitKind::Other;
+    };
+    let app = AtspiElement::new(owner.bus_name(), REGISTRY_ROOT_PATH, owner.pid());
+    match within(deadline, read_toolkit(connection.inner(), &app)) {
+        Ok(toolkit) => kind(&toolkit),
+        Err(_) => ToolkitKind::Other,
+    }
+}
+
 fn still_open(bus: &SharedBus, owner: &AtspiElement, deadline: Deadline) -> Option<bool> {
     let walk = scan_walk_structure(
         bus,
@@ -115,28 +145,25 @@ fn still_open(bus: &SharedBus, owner: &AtspiElement, deadline: Deadline) -> Opti
         deadline,
     )
     .ok()?;
-    Some(is_open_owner(&walk))
+    popup_open(&walk)
 }
 
-/// Presses the popup owner's own action and keeps its reply: no matching verb
-/// or a reply of false is `WriteReply::Absent`, and a call that timed out after
-/// it was sent keeps the uncertain delivery the write path gives it.
-fn press_owner(
-    bus: &SharedBus,
-    owner: &AtspiElement,
-    role: Option<u32>,
-    deadline: Deadline,
-) -> Result<WriteReply, AdapterError> {
-    let handle = owner.clone().into_native_handle();
-    let target = Target {
-        bus,
-        handle: &handle,
-        element: owner,
-        deadline,
-    };
-    let view = target.view()?;
-    let names = view.action_names().unwrap_or_default();
-    do_action(&target, names, click_verbs(role))
+/// Whether the owner's popup is open, read after a dismissal. `None` when the
+/// owner's states, a child's role or a popup child's states could not be
+/// read, or the walk was cut short: a popup that could not be read never
+/// counts as closed.
+pub(super) fn popup_open(owner: &WalkedNode<ObservedRead>) -> Option<bool> {
+    if owner.children.iter().any(showing_popup) {
+        return Some(true);
+    }
+    let unread = bits(owner).is_none()
+        || owner.truncated
+        || owner.children.iter().any(|child| match role(child) {
+            Some(MENU | POPUP_MENU) => bits(child).is_none(),
+            Some(_) => false,
+            None => true,
+        });
+    (!unread).then_some(false)
 }
 
 /// What the owner's reply settles. A reply of false delivered nothing, so the
@@ -148,9 +175,10 @@ fn popup_outcome(reply: WriteReply, read_closed: impl FnOnce() -> Option<bool>) 
     }
 }
 
-/// The open popup of the target window, closed through its owner. `None`
-/// when no popup is open, which leaves core's refusal as it was; every other
-/// result, the attempt's own failure included, is the answer.
+/// The open native popup of the target window, closed through its owner when
+/// it advertises a safe dismissal verb. `None` when no dismissible popup is
+/// open, which leaves core's refusal as it was; every other result, the
+/// attempt's own failure included, is the answer.
 pub(crate) fn close_transient_surface(
     bus: &SharedBus,
     process: &ProcessIdentity,
@@ -179,8 +207,21 @@ pub(crate) fn close_transient_surface(
     let Some((_, owner, owner_role)) = best else {
         return Ok(None);
     };
+    let verbs = close_verbs(owner_role, owner_toolkit(bus, &owner, deadline));
+    let handle = owner.clone().into_native_handle();
+    let target = Target {
+        bus,
+        handle: &handle,
+        element: &owner,
+        deadline,
+    };
+    let view = target.view()?;
+    let names = view.action_names().unwrap_or_default();
+    if resolve_verb(names, verbs).is_none() {
+        return Ok(None);
+    }
     let run = || {
-        let reply = press_owner(bus, &owner, owner_role, deadline)?;
+        let reply = do_action(&target, names, verbs)?;
         Ok(popup_outcome(reply, || {
             deadline.poll_until(
                 CLOSE_SETTLE,

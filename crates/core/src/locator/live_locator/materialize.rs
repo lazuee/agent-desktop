@@ -138,7 +138,7 @@ pub(crate) fn ref_entry(
             root_ref: None,
             path_is_absolute: false,
             path: node.path.clone(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     };
     apply_source(&mut entry, source, &node.path);

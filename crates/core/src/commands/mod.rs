@@ -114,4 +114,7 @@ mod operation_passthrough_tests;
 mod application_surface_tests;
 
 #[cfg(test)]
+mod application_surface_window_tests;
+
+#[cfg(test)]
 mod tests;

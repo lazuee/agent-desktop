@@ -134,9 +134,9 @@ impl SystemOps for DragCaptureAdapter {
         &self,
         window: &crate::WindowInfo,
         _lease: &crate::InteractionLease,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
         self.focused_pids.lock().unwrap().push(window.pid);
-        Ok(())
+        Ok(crate::DeliverySemantics::delivered_unverified())
     }
 
     fn update_cursor_overlay(&self, control: &CursorOverlayControl) -> Result<(), AdapterError> {

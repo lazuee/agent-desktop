@@ -26,8 +26,9 @@ impl HeadedFocus {
 }
 
 /// Focuses the window a ref came from and returns whether it did. A ref
-/// captured through a process owner has no window to raise, so it returns
-/// `false`; any other ref without a window id is refused.
+/// captured through a process owner, or from a surface the platform presents
+/// beside its windows rather than as one of them, has no census window to
+/// raise, so it returns `false`; any other ref without a window id is refused.
 pub(crate) fn focus_entry_window(
     entry: &crate::RefEntry,
     adapter: &dyn PlatformAdapter,
@@ -41,7 +42,9 @@ pub(crate) fn focus_entry_window(
         )
         .with_details(json!({ "physical_delivery_started": false }))
     })?;
-    if entry.source.is_process_owned() {
+    if entry.source.is_process_owned()
+        || adapter.is_application_surface(entry.source.source_surface)
+    {
         return Ok(false);
     }
     let expected = adapter.resolve_ref_focus_window(entry, lease.deadline())?;

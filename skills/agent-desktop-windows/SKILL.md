@@ -60,6 +60,8 @@ Use `$env:NAME = 'value'` for environment variables.
   bounded observation before concluding that content is absent.
 - An open application menu is the `menu` surface; there is no `menubar` surface. An owned popup window
   of the app (a ribbon drop-down) is a `popover`: `list-surfaces` lists it, `snapshot --surface popover` reads it.
+  When several popovers are open, name one with `--app <app> --window-id <its w-id from list-surfaces>`;
+  without a name the read is refused with `AMBIGUOUS_TARGET` rather than reading a different popover.
   Shell surfaces are separate from ordinary window inventory. `quick-settings`
   refuses with `INVALID_ARGS` naming `action-center`.
 - Notification reads adopt an already-open Action Center headless; opening it

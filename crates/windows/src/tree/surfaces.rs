@@ -24,14 +24,8 @@ pub(crate) fn surface_root(
 ) -> Result<UIAElement, AdapterError> {
     match (root, surface) {
         (ObservationRoot::Application { app, .. }, SnapshotSurface::Popover) => {
-            let popover = crate::tree::surface_inventory::first_popover(app.pid, deadline)?
-                .ok_or_else(|| {
-                    AdapterError::new(
-                        ErrorCode::WindowNotFound,
-                        "No popover is open in this application",
-                    )
-                })?;
-            root_from_hwnd(popover as isize, deadline)
+            let popover = crate::tree::popover_choice::resolve_popover(app.pid, None, deadline)?;
+            root_from_hwnd(popover.handle as isize, deadline)
         }
         (ObservationRoot::Application { .. }, _) => {
             Err(AdapterError::not_supported("application observation root"))
@@ -48,14 +42,13 @@ pub(crate) fn surface_root(
             root_from_hwnd(handle, deadline)
         }
         (ObservationRoot::Window(window), SnapshotSurface::Sheet) => {
-            let handle = focused_hwnd_of(&window.id)?;
-            let element = root_from_hwnd(handle, deadline)?;
+            let element = root_from_hwnd(parse_window_id(&window.id)?, deadline)?;
             if window_is_modal_sheet(&element) {
                 Ok(element)
             } else {
                 Err(AdapterError::new(
                     ErrorCode::WindowNotFound,
-                    "The focused window is not a modal sheet",
+                    "The window is not a modal sheet",
                 ))
             }
         }
@@ -75,14 +68,8 @@ pub(crate) fn surface_root(
             root_from_hwnd(location.root_handle(), deadline)
         }
         (ObservationRoot::Window(window), SnapshotSurface::Popover) => {
-            let popover = crate::tree::surface_inventory::first_popover(window.pid, deadline)?
-                .ok_or_else(|| {
-                    AdapterError::new(
-                        ErrorCode::WindowNotFound,
-                        "No popover is open in this application",
-                    )
-                })?;
-            root_from_hwnd(popover as isize, deadline)
+            let popover = popover_handle(window.pid, &window.id, deadline)?;
+            root_from_hwnd(popover.handle as isize, deadline)
         }
         (ObservationRoot::Window(window), SnapshotSurface::StartMenu)
         | (ObservationRoot::Window(window), SnapshotSurface::Taskbar)
@@ -102,6 +89,24 @@ pub(crate) fn surface_root(
             })
         }
         (ObservationRoot::Window(_), _) => Err(AdapterError::not_supported("surface")),
+    }
+}
+
+/// The popover a window-rooted surface read lands on. A window id that names
+/// one of the process's open popovers reads that popover. Any other window id
+/// keeps this platform's meaning - the popover of that window's application -
+/// and is refused when several are open, since none of them was named.
+fn popover_handle(
+    pid: agent_desktop_core::ProcessId,
+    named: &str,
+    deadline: Deadline,
+) -> Result<crate::system::window::window_enum::EnumeratedWindow, AdapterError> {
+    match crate::tree::popover_choice::resolve_popover(pid, Some(named), deadline) {
+        Ok(popover) => Ok(popover),
+        Err(error) if error.code == ErrorCode::WindowNotFound => {
+            crate::tree::popover_choice::resolve_popover(pid, None, deadline)
+        }
+        Err(error) => Err(error),
     }
 }
 

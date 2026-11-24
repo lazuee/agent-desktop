@@ -14,9 +14,9 @@ fn surface(id: &str, kind: &str) -> SurfaceInfo {
 #[test]
 fn shared_menu_discovery_preserves_other_surfaces_and_existing_menu_ids() {
     let window_surfaces = vec![
-        surface("focused-window", "sheet"),
-        surface("focused-window/children/2", "popover"),
-        surface("focused-window/children/4", "alert"),
+        surface("w-7", "sheet"),
+        surface("w-9", "popover"),
+        surface("w-11", "alert"),
     ];
     for menus in [
         vec![],
@@ -120,4 +120,15 @@ fn a_system_dialog_is_listed_as_an_alert_like_a_dialog() {
         super::kind_of(Some("AXWindow"), Some("AXStandardWindow")),
         None
     );
+}
+
+#[test]
+fn an_unclassified_read_is_incomplete_and_a_settled_absence_is_not() {
+    let cut = AdapterError::new(agent_desktop_core::ErrorCode::ElementNotFound, "cut")
+        .with_details(serde_json::json!({ "complete": false }));
+    assert!(is_incomplete(&cut));
+    assert!(!is_incomplete(&AdapterError::new(
+        agent_desktop_core::ErrorCode::ElementNotFound,
+        "gone"
+    )));
 }

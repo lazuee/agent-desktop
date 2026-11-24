@@ -1,8 +1,11 @@
 use std::cell::RefCell;
 
-use agent_desktop_core::{AdapterError, DeliveryObservation, DeliveryOutcome, DeliverySemantics};
+use agent_desktop_core::{
+    AdapterError, Deadline, DeliveryObservation, DeliveryOutcome, DeliverySemantics,
+};
 
-use super::first_menu_outcome;
+use super::{first_menu_outcome, show_menu_after};
+use crate::tree::AXElement;
 
 const SENT: DeliveryOutcome = DeliveryOutcome::Delivered(DeliveryObservation::Unverified);
 const SEEN: DeliveryOutcome = DeliveryOutcome::Delivered(DeliveryObservation::Verified);
@@ -32,18 +35,29 @@ fn run(outcomes: &[DeliveryOutcome], menu_open: bool) -> (DeliveryOutcome, Vec<u
 }
 
 #[test]
-fn an_unverified_send_that_never_shows_a_menu_lets_every_route_run_once() {
+fn a_pointer_click_that_shows_no_menu_leaves_every_accessibility_route_running() {
     assert_eq!(
-        run(&[SENT, NOTHING, NOTHING, NOTHING, NOTHING], false),
-        (SENT, vec![0, 1, 2, 3, 4])
+        run(&[SENT, NOTHING, NOTHING, NOTHING, NOTHING, NOTHING], false),
+        (SENT, vec![0, 1, 2, 3, 4, 5])
     );
 }
 
 #[test]
-fn a_menu_seen_after_an_unverified_send_is_verified_before_another_route_runs() {
+fn a_menu_that_appears_after_the_pointer_click_is_verified_before_another_route_runs() {
     assert_eq!(
-        run(&[SENT, NOTHING, NOTHING, NOTHING, NOTHING], true),
+        run(&[SENT, NOTHING, NOTHING, NOTHING, NOTHING, NOTHING], true),
         (SEEN, vec![0])
+    );
+}
+
+#[test]
+fn the_first_route_runs_before_any_accessibility_route() {
+    let element = AXElement(std::ptr::null_mut());
+    let deadline = Deadline::after(1_000).unwrap();
+
+    assert_eq!(
+        show_menu_after(|| Ok(SEEN), &element, deadline).unwrap(),
+        SEEN
     );
 }
 

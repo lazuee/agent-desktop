@@ -2,6 +2,7 @@ use agent_desktop_core::{Action, ActionRequest, AdapterError, Deadline, Declared
 
 use super::{foreground_effect, takes_foreground};
 use crate::tree::Field;
+use crate::tree::LabelOutcome;
 use crate::tree::capabilities::action_read::NodeView;
 use crate::tree::properties::toolkit_trust::ToolkitKind::{self, Gtk3, Gtk4, Other, Qt};
 use crate::tree::test_support::helpers::{read_of, view_of, words};
@@ -31,6 +32,17 @@ fn view((role, name, actions, popup, selection): Node) -> NodeView {
     read.node.traits.states = Field::Present(words(bits));
     let selection = selection.then(|| "org.a11y.atspi.Selection".to_owned());
     read.node.traits.interfaces = Field::Present(selection.into_iter().collect());
+    view_of(read)
+}
+
+fn no_owner() -> Result<Option<NodeView>, AdapterError> {
+    Ok(None)
+}
+
+fn labelled(actions: &'static [&'static str], label: LabelOutcome) -> NodeView {
+    let mut read = read_of(PUSH_BUTTON, "", actions);
+    read.node.traits.states = Field::Present(words(&[SHOWING]));
+    read.label = label;
     view_of(read)
 }
 
@@ -140,6 +152,47 @@ fn a_field_the_read_could_not_answer_never_proves_an_action_safe() {
         let takes = takes_foreground(&action, &view_of(read), toolkit, none).unwrap();
         assert!(takes.is_some());
     }
+}
+
+#[test]
+fn a_label_that_opens_a_dialog_counts_when_the_name_is_blank() {
+    for text in ["Settings…", "Open..."] {
+        let view = labelled(&["Click"], LabelOutcome::Text(text.to_owned()));
+        assert!(
+            takes_foreground(&Action::Click, &view, Gtk4, no_owner)
+                .unwrap()
+                .is_some(),
+            "{text}"
+        );
+    }
+    let plain = labelled(&["Click"], LabelOutcome::Unlabelled);
+    assert!(
+        takes_foreground(&Action::Click, &plain, Gtk4, no_owner)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn an_unread_label_with_a_blank_name_never_proves_the_action_safe() {
+    let view = labelled(&["Click"], LabelOutcome::Failed);
+    assert!(
+        takes_foreground(&Action::Click, &view, Gtk4, no_owner)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn a_non_blank_name_outranks_the_label_it_repeats() {
+    let mut read = read_of(PUSH_BUTTON, "Preferences", &["Click"]);
+    read.node.traits.states = Field::Present(words(&[SHOWING]));
+    read.label = LabelOutcome::Text("Settings…".to_owned());
+    assert!(
+        takes_foreground(&Action::Click, &view_of(read), Gtk4, no_owner)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]

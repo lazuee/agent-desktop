@@ -1,6 +1,11 @@
 use crate::tree::{AXElement, properties::element::element_for_pid};
 use agent_desktop_core::{AdapterError, Deadline, SurfaceInfo};
 
+use super::surface_ids::{
+    ChildSurface, ObservedPopover, WindowObservation, push_unique, surface, surface_id,
+    window_surfaces,
+};
+
 /// The most children an element that anchors a surface has. An element with
 /// more is a content container: a list, a table or a column of a browser.
 pub(crate) const ANCHOR_CHILD_LIMIT: usize = 16;
@@ -12,10 +17,14 @@ pub(crate) fn list_surfaces_for_process(
 ) -> Result<Vec<SurfaceInfo>, AdapterError> {
     let app = element_for_pid(identity.pid());
     super::app_menu::observe(identity, deadline, || {
-        let popovers = crate::system::window::popup_window::shows_popup_window(identity.pid());
-        list_surfaces_once(identity.pid(), deadline, popovers, || {
-            Ok(read_array(&app, "AXWindows", deadline)?.unwrap_or_default())
-        })
+        let windows = read_array(&app, "AXWindows", deadline)?.unwrap_or_default();
+        let listed = windows
+            .iter()
+            .filter_map(|window| window_number(window, deadline).ok().flatten())
+            .collect();
+        let popovers =
+            crate::system::window::popup_window::shows_unlisted_window(identity.pid(), &listed);
+        list_surfaces_once(identity.pid(), deadline, popovers, || Ok(windows))
     })
 }
 
@@ -42,12 +51,10 @@ fn list_surfaces_once(
         deadline,
         || {
             let mut surfaces = Vec::new();
-            for (index, window) in windows()?.iter().enumerate() {
-                let id = format!("windows/{index}");
-                let listed = surfaces.len();
-                collect_window_surfaces(window, &id, deadline, &mut surfaces)?;
-                if popovers && !surfaces[listed..].iter().any(|s| s.kind == "popover") {
-                    push_anchored_popover(window, &id, deadline, &mut surfaces)?;
+            for window in windows()? {
+                let observed = observe_window(&window, deadline, popovers)?;
+                for surface in window_surfaces(observed) {
+                    push_unique(&mut surfaces, surface);
                 }
             }
             Ok(surfaces)
@@ -62,31 +69,74 @@ fn list_surfaces_once(
     )
 }
 
-/// A headless target window is rarely the focused one, and a popover hangs
-/// below the control that raised it, so while the application shows a pop-up
-/// window every window gets the bounded popover search. A window whose search
-/// reached its element limit is left out.
-fn push_anchored_popover(
+/// Reads one window, and searches it for a popover when the application shows
+/// a window its accessibility window list leaves out.
+fn observe_window(
     window: &AXElement,
-    window_id: &str,
     deadline: Deadline,
-    surfaces: &mut Vec<SurfaceInfo>,
-) -> Result<(), AdapterError> {
-    let popover = match super::surfaces::popover_in_window(window, deadline) {
-        Ok(popover) => popover,
-        Err(error) if error.code == agent_desktop_core::ErrorCode::ElementNotFound => None,
-        Err(error) => return Err(error),
-    };
-    if let Some(popover) = popover {
-        surfaces.push(SurfaceInfo {
-            id: format!("{window_id}/popover"),
-            kind: "popover".into(),
-            title: read_title(&popover, deadline)?,
-            item_count: None,
-            unclassified: Vec::new(),
+    popovers: bool,
+) -> Result<WindowObservation, AdapterError> {
+    let number = window_number(window, deadline)?;
+    let mut children = Vec::new();
+    let listed = read_array(window, "AXChildren", deadline)?.unwrap_or_default();
+    for (index, child) in listed.iter().enumerate() {
+        let Some(kind) = surface_kind(child, deadline)? else {
+            continue;
+        };
+        children.push(ChildSurface {
+            number: window_number(child, deadline)?,
+            kind,
+            title: read_title(child, deadline)?,
+            index,
         });
     }
-    Ok(())
+    let popover = if popovers && !children.iter().any(|child| child.kind == "popover") {
+        observe_popover(window, deadline)?
+    } else {
+        ObservedPopover::Absent
+    };
+    Ok(WindowObservation {
+        number,
+        kind: surface_kind(window, deadline)?,
+        title: read_title(window, deadline)?,
+        children,
+        popover,
+    })
+}
+
+/// The bounded popover search of one window. A search that read every element
+/// and found no popover settles an absence; a search cut at its element limit
+/// names `popover` unclassified instead, so a popover it could not read is
+/// never reported as one the application does not show. Any other failure is
+/// the read's own and propagates.
+fn observe_popover(
+    window: &AXElement,
+    deadline: Deadline,
+) -> Result<ObservedPopover, AdapterError> {
+    match super::surfaces::popover_in_window(window, deadline) {
+        Ok(Some(popover)) => Ok(ObservedPopover::Found {
+            number: window_number(&popover, deadline)?,
+            title: read_title(&popover, deadline)?,
+        }),
+        Ok(None) => Ok(ObservedPopover::Absent),
+        Err(error) if is_incomplete(&error) => Ok(ObservedPopover::Unread {
+            title: read_title(window, deadline)?,
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+fn window_number(element: &AXElement, deadline: Deadline) -> Result<Option<i64>, AdapterError> {
+    let number =
+        crate::system::window::window_resolve::ax_window_id_with_deadline(element, deadline)?;
+    Ok(number.filter(|number| *number > 0))
+}
+
+fn is_incomplete(error: &AdapterError) -> bool {
+    error
+        .details
+        .as_ref()
+        .is_some_and(|details| details["complete"] == false)
 }
 
 fn list_surfaces_with(
@@ -140,8 +190,24 @@ pub(crate) fn collect_anchored_surfaces(
         children.as_concrete_TypeRef(),
         deadline,
     );
-    if anchors_few_children(count.ok()) {
-        let _ = collect_window_surfaces(anchor, "target", deadline, surfaces);
+    if !anchors_few_children(count.ok()) {
+        return;
+    }
+    let Ok(listed) = read_array(anchor, "AXChildren", deadline) else {
+        return;
+    };
+    for (index, child) in listed.unwrap_or_default().iter().enumerate() {
+        let Ok(Some(kind)) = surface_kind(child, deadline) else {
+            continue;
+        };
+        let Ok(title) = read_title(child, deadline) else {
+            continue;
+        };
+        let id = window_number(child, deadline)
+            .ok()
+            .flatten()
+            .map_or_else(|| format!("target/{kind}/{index}"), surface_id);
+        surfaces.push(surface(id, kind, title));
     }
 }
 
@@ -165,38 +231,6 @@ pub(crate) fn with_anchored(
 
 fn anchors_few_children(count: Option<usize>) -> bool {
     count.is_some_and(|count| (1..=ANCHOR_CHILD_LIMIT).contains(&count))
-}
-
-fn collect_window_surfaces(
-    window: &AXElement,
-    window_id: &str,
-    deadline: Deadline,
-    surfaces: &mut Vec<SurfaceInfo>,
-) -> Result<(), AdapterError> {
-    if let Some(kind) = surface_kind(window, deadline)? {
-        surfaces.push(SurfaceInfo {
-            id: window_id.to_string(),
-            kind: kind.into(),
-            title: read_title(window, deadline)?,
-            item_count: None,
-            unclassified: Vec::new(),
-        });
-    }
-    let Some(children) = read_array(window, "AXChildren", deadline)? else {
-        return Ok(());
-    };
-    for (index, child) in children.iter().enumerate() {
-        if let Some(kind) = surface_kind(child, deadline)? {
-            surfaces.push(SurfaceInfo {
-                id: format!("{window_id}/children/{index}"),
-                kind: kind.into(),
-                title: read_title(child, deadline)?,
-                item_count: None,
-                unclassified: Vec::new(),
-            });
-        }
-    }
-    Ok(())
 }
 
 fn surface_kind(

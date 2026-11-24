@@ -6,10 +6,11 @@ use crate::tree::{AtspiElement, atspi_element};
 
 /// The bus guid the refs of an observation are tokened under, or empty for
 /// none. A token is issued only for a toolkit whose accessible objects were
-/// measured to keep their path for one record (GTK3 and GTK4, L17-15 and the
-/// row-rebind census); Qt gave a dead path to a new object with the same role
-/// and name, and a Chromium list recycles a DOM node for another row under the
-/// same path and fingerprint, so their refs keep the capture proof.
+/// measured to keep their path for one record (GTK3 and GTK4, L17-15). Qt gave
+/// a dead path to a new object with the same role and name (L17-15). A
+/// Chromium path follows a DOM node, and the page decides what that node
+/// shows: no reuse was seen on a list that appends rows (L42-7), but a page can
+/// move a node to another row, so Chromium and Qt refs keep the capture proof.
 pub(crate) fn guid_for(bus: &SharedBus, root: &ObservationRoot<'_>, deadline: Deadline) -> String {
     let app = match root {
         ObservationRoot::Window(window) => window_id::decode(&window.id)

@@ -81,7 +81,7 @@ fn point_ref_snapshot() -> String {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     });
     store.save_new_snapshot(&refmap).unwrap()

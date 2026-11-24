@@ -80,7 +80,27 @@ mod imp {
         policy: InteractionPolicy,
         deadline: Deadline,
     ) -> Result<Vec<ActionStep>, AdapterError> {
+        disclosure_steps_guarded(element, want_expanded, policy, deadline, &|| Ok(()))
+    }
+
+    pub(crate) fn collapse_with_guard(
+        element: &UIAElement,
+        policy: InteractionPolicy,
+        deadline: Deadline,
+        guard: &dyn Fn() -> Result<(), AdapterError>,
+    ) -> Result<Vec<ActionStep>, AdapterError> {
+        disclosure_steps_guarded(element, false, policy, deadline, guard)
+    }
+
+    fn disclosure_steps_guarded(
+        element: &UIAElement,
+        want_expanded: bool,
+        policy: InteractionPolicy,
+        deadline: Deadline,
+        guard: &dyn Fn() -> Result<(), AdapterError>,
+    ) -> Result<Vec<ActionStep>, AdapterError> {
         deadline.ensure_remaining()?;
+        guard()?;
         let pattern_ok =
             read_one(element, TreeProperty::ExpandCollapseAvailable).flag() == Some(true);
         let current = read_expand_state(element);
@@ -97,11 +117,15 @@ mod imp {
         } else {
             COLLAPSE_LABEL
         };
-        let mut legacy =
-            || deliver_and_observe(element, want_expanded, deadline, legacy_default_action);
+        let mut legacy = || {
+            deliver_and_observe(element, want_expanded, deadline, |element| {
+                guard()?;
+                legacy_default_action(element)
+            })
+        };
         let mut pattern = || {
             deliver_and_observe(element, want_expanded, deadline, |element| {
-                pattern_expand_collapse(element, want_expanded, label)
+                pattern_expand_collapse(element, want_expanded, label, guard)
             })
         };
         agent_desktop_core::execute_chain(
@@ -148,10 +172,13 @@ mod imp {
         element: &UIAElement,
         want_expanded: bool,
         label: &'static str,
+        guard: &dyn Fn() -> Result<(), AdapterError>,
     ) -> Result<bool, AdapterError> {
         let operation = if want_expanded { "Expand" } else { "Collapse" };
+        guard()?;
         match element.0.get_pattern::<UIExpandCollapsePattern>() {
             Ok(pattern) => {
+                guard()?;
                 let result = if want_expanded {
                     pattern.expand()
                 } else {
@@ -179,6 +206,17 @@ mod imp {
     ) -> Result<Vec<ActionStep>, AdapterError> {
         Err(AdapterError::not_supported("ExpandCollapse"))
     }
+
+    pub(crate) fn collapse_with_guard(
+        _: &UIAElement,
+        _: InteractionPolicy,
+        _: Deadline,
+        _: &dyn Fn() -> Result<(), AdapterError>,
+    ) -> Result<Vec<ActionStep>, AdapterError> {
+        Err(AdapterError::not_supported("ExpandCollapse"))
+    }
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) use imp::collapse_with_guard;
 pub(crate) use imp::disclosure_steps;

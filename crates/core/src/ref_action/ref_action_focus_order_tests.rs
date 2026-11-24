@@ -212,13 +212,17 @@ impl SystemOps for FocusAdapter {
         Ok(())
     }
 
-    fn focus_window(&self, _: &WindowInfo, _: &InteractionLease) -> Result<(), AdapterError> {
+    fn focus_window(
+        &self,
+        _: &WindowInfo,
+        _: &InteractionLease,
+    ) -> Result<crate::DeliverySemantics, AdapterError> {
         assert!(
             !self.application_menu,
             "application menus have no document window"
         );
         self.focused.store(true, Ordering::SeqCst);
-        Ok(())
+        Ok(crate::DeliverySemantics::delivered_unverified())
     }
 }
 
@@ -354,7 +358,7 @@ fn headed_click_does_not_resolve_before_window_focus_and_dispatch() {
             &self,
             window: &WindowInfo,
             lease: &InteractionLease,
-        ) -> Result<(), AdapterError> {
+        ) -> Result<crate::DeliverySemantics, AdapterError> {
             self.0.focus_window(window, lease)
         }
     }

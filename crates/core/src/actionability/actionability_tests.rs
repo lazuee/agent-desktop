@@ -47,7 +47,7 @@ fn entry() -> RefEntry {
             root_ref: None,
             path_is_absolute: true,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     }
 }

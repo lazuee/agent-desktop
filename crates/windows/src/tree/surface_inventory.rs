@@ -77,23 +77,8 @@ fn require_live_process(process: &ProcessIdentity) -> Result<(), AdapterError> {
     ))
 }
 
-/// The pid's agent-facing top-level windows, from the one enumeration pass
-/// every window inventory on this platform shares - the same walk
-/// `list_windows` and the menu detector draw from, filtered by the same
-/// census predicate.
-/// The handle of the process's first open popover, if any.
-pub(crate) fn first_popover(
-    pid: ProcessId,
-    deadline: Deadline,
-) -> Result<Option<WindowHandle>, AdapterError> {
-    Ok(windows_of(pid, deadline)?
-        .1
-        .first()
-        .map(|popover| popover.handle))
-}
-
 /// The process's census windows and its popovers (tool windows the census drops).
-fn windows_of(
+pub(super) fn windows_of(
     pid: ProcessId,
     deadline: Deadline,
 ) -> Result<(Vec<EnumeratedWindow>, Vec<EnumeratedWindow>), AdapterError> {
@@ -126,7 +111,7 @@ fn windows_of(
 
 fn surface(kind: SnapshotSurface, handle: WindowHandle, title: Option<String>) -> SurfaceInfo {
     SurfaceInfo {
-        id: format!("w-{}", handle as usize),
+        id: super::popover_choice::handle_id(handle),
         kind: kind.as_str().to_string(),
         title,
         item_count: None,

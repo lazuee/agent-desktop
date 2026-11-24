@@ -52,14 +52,44 @@ fn open_kind(kind: &str) -> Result<Option<SnapshotSurface>, AppError> {
     }
 }
 
+/// The kinds `wait --surface` names; `any` is any one of them, never a plain
+/// window, which Linux and Windows list for every window.
+const OPEN_KINDS: [SnapshotSurface; 4] = [
+    SnapshotSurface::Popover,
+    SnapshotSurface::Sheet,
+    SnapshotSurface::Alert,
+    SnapshotSurface::Menu,
+];
+
 /// Whether a listed surface is of the kind a wait asks for. A context menu is
 /// a menu.
 pub(crate) fn is_kind(surface: &SurfaceInfo, kind: Option<SnapshotSurface>) -> bool {
+    kind_matches(&surface.kind, kind)
+}
+
+/// Whether an inventory entry that names `listed` satisfies the wait. Shared by
+/// the listed surfaces and the kinds an entry reports as unclassified, so a
+/// surface that was not read is judged by the same rule as one that was.
+fn kind_matches(listed: &str, kind: Option<SnapshotSurface>) -> bool {
     match kind {
-        None => true,
-        Some(SnapshotSurface::Menu) => matches!(surface.kind.as_str(), "menu" | "context_menu"),
-        Some(kind) => surface.kind == kind.as_str(),
+        None => OPEN_KINDS
+            .into_iter()
+            .any(|kind| kind_matches(listed, Some(kind))),
+        Some(SnapshotSurface::Menu) => matches!(listed, "menu" | "context_menu"),
+        Some(kind) => listed == kind.as_str(),
     }
+}
+
+/// Whether the last observation reports the kind a wait asks for as
+/// unclassified: the inventory did not read it, so no matching surface has not
+/// shown that the application presented none.
+pub(crate) fn unread(surfaces: &[SurfaceInfo], kind: Option<SnapshotSurface>) -> bool {
+    surfaces.iter().any(|surface| {
+        surface
+            .unclassified
+            .iter()
+            .any(|listed| kind_matches(listed, kind))
+    })
 }
 
 #[cfg(test)]

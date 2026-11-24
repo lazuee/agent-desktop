@@ -29,6 +29,16 @@ fn ambiguous_target_error_has_machine_readable_code() {
     assert!(error.suggestion.is_some());
 }
 
+/// The generic constructor does not know why the policy denied, so it cannot
+/// know that headed mode lifts it. Only `policy_denied_for_policy`, which
+/// receives the interaction policy, names headed mode.
+#[test]
+fn generic_policy_denied_makes_no_headed_mode_assumption() {
+    let error = AdapterError::policy_denied("Key combo 'alt+f4' is blocked for safety");
+    assert_eq!(error.code, ErrorCode::PolicyDenied);
+    assert!(error.suggestion.is_none());
+}
+
 #[test]
 fn policy_denied_suggestion_is_mode_aware() {
     let headless = AdapterError::policy_denied_for_policy("blocked", InteractionPolicy::headless());

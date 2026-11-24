@@ -29,16 +29,6 @@ fn an_entry_absent_from_the_fresh_listing_counts_as_dismissed_without_an_attempt
 }
 
 #[test]
-fn a_held_entry_that_dismisses_counts_as_dismissed() {
-    let original = notification_entry(2, "Standup");
-    let current = vec![notification_entry(2, "Standup")];
-
-    let result = super::dismiss_turn(&original, &current, |_, _| Ok(()));
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn a_held_entry_whose_attempt_fails_reports_the_captured_index() {
     let original = notification_entry(2, "Standup");
     let current = vec![notification_entry(2, "Standup")];

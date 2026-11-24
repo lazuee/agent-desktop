@@ -194,7 +194,7 @@ fn save_ref_in_store(store: RefStore, states: Vec<String>) -> String {
             root_ref: None,
             path_is_absolute: false,
             path: smallvec::SmallVec::new(),
-            chain: Vec::new(),
+            chain: Default::default(),
         },
     });
     store.save_new_snapshot(&refmap).unwrap()

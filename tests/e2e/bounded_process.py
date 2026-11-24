@@ -5,6 +5,7 @@ import selectors
 import signal
 import subprocess
 import time
+from typing import Optional
 
 
 DEFAULT_TIMEOUT_SECONDS = 20.0
@@ -21,7 +22,7 @@ class BoundedResult:
     stderr: str
     timed_out: bool
     output_limited: bool
-    termination_error: str | None
+    termination_error: Optional[str]
     wall_ms: float
     cpu_ms: float
 

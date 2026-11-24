@@ -66,14 +66,14 @@ pub trait SystemOps: Send + Sync {
         Err(AdapterError::not_supported("start_permission_guide"))
     }
 
-    /// Performs the platform-native focus/raise operation for the exact window.
-    /// Core decides when focus is required; implementations must return only
-    /// after that window is confirmed focused, or return an error.
+    /// Performs the platform-native focus/raise for the exact window and
+    /// reports how far it got: `not_delivered` when nothing was sent,
+    /// `delivered_unverified` when core must confirm, or verified by the adapter.
     fn focus_window(
         &self,
         _win: &WindowInfo,
         _lease: &InteractionLease,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<DeliverySemantics, AdapterError> {
         Err(AdapterError::not_supported("focus_window"))
     }
 

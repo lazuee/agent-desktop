@@ -124,10 +124,7 @@ pub(crate) fn dispatch_resolved_landing(
                 .map_err(|error| after_scroll(into_adapter_error(error)))?
         }
     };
-    if matches!(
-        preflight.pointer_delivery,
-        actionability::PointerDelivery::Semantic
-    ) {
+    if preflight.pointer_delivery == actionability::PointerDelivery::Semantic {
         request.policy.allow_cursor_move = false;
     }
     request = request
